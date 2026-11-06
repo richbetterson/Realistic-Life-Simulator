@@ -1,0 +1,466 @@
+// Realistic Life Simulator - settings and key binding files.
+//   Config\Settings.ini     general options (validated, repaired if broken)
+//   Config\KeyBindings.ini  every entry EMPTY on first install
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
+using System.Windows.Forms;
+
+namespace RealisticLifeSimulator.Core
+{
+    public enum PerformanceProfileKind { Low, Balanced, High }
+
+    public enum FuelGaugeMode { Always, LowOnly, Off }
+
+    public enum FineMode { Witnessed, Always, Off }
+
+    public sealed class RlsSettings
+    {
+        // General / interface
+        public LanguageSetting Language = LanguageSetting.Auto;
+        public PerformanceProfileKind Profile = PerformanceProfileKind.Low;
+        public int AutosaveMinutes = 5;
+        public bool ShowHubBlips = true;
+        public FuelGaugeMode FuelGauge = FuelGaugeMode.Always;
+        public bool ShowSpeedLimit = true;
+        public bool DebugLogging = false;
+
+        // Fuel
+        public bool FuelEnabled = true;
+        public float FuelPricePerLiter = 1.65f;
+        public float FuelConsumption = 1.0f;     // 1.0 = full tank lasts roughly 1-1.5 h of driving
+        public bool NpcRefuelling = true;
+        public int LowFuelWarningPercent = 15;
+
+        // Traffic
+        public bool TrafficEnabled = true;
+        public FineMode Fines = FineMode.Witnessed;
+        public int SpeedToleranceKmh = 10;
+        public float FineMultiplier = 1.0f;
+        public bool DetectSpeeding = true;
+        public bool DetectRedLights = true;
+        public bool DetectStopSigns = true;
+        public bool DetectWrongWay = true;
+        public bool DetectHeadlights = true;
+
+        // Police and accidents (Phase 3)
+        public bool PoliceStops = true;      // police pull the player over instead of mailing a ticket
+        public bool NpcPoliceStops = true;   // police also stop speeding NPC drivers
+        public bool AccidentsEnabled = true;
+        public int AccidentMinSpeedKmh = 12; // impacts below this are ignored (parking bumps)
+        public bool NpcCallEmergency = true; // other drivers call 911 after serious crashes
+
+        // NPC traffic (Phase 4)
+        public bool NpcTraffic = true;        // personalities, speed limits
+        public bool NpcMistakes = true;       // occasional believable mistakes
+        public bool NpcYieldEmergency = true; // NPCs slow down for sirens
+        public bool NpcAccidents = true;      // NPC-vs-NPC accident scenes
+        public bool DetectFailureToYield = true;
+
+        // Ownership (Phase 5)
+        public int BillingIntervalMinutes = 60;  // play time between bills (maintenance, premiums, rent)
+        public bool VehicleWear = true;
+        public float WearRate = 1.0f;
+        public int ServiceIntervalKm = 400;
+        public bool ShowPropertiesOnMap = true;
+
+        // Passengers and taxi
+        public bool PassengerEnabled = true;
+        public bool TaxiEnabled = true;
+        public float TaxiBaseFare = 3.0f;
+        public float TaxiPricePerKm = 2.2f;
+        public float TaxiPricePerMinute = 0.35f;
+
+        public static readonly float[] TaxiBaseChoices = { 0f, 2.0f, 3.0f, 5.0f, 8.0f };
+        public static readonly float[] TaxiPerKmChoices = { 1.0f, 1.5f, 2.2f, 3.0f, 4.0f };
+        public static readonly float[] TaxiPerMinuteChoices = { 0f, 0.2f, 0.35f, 0.5f, 1.0f };
+
+        public static readonly int[] BillingChoices = { 30, 60, 90, 120 };
+        public static readonly float[] WearChoices = { 0.5f, 1.0f, 1.5f, 2.0f };
+
+        public static readonly int[] AutosaveChoices = { 2, 5, 10, 15, 30 };
+        public static readonly float[] FuelPriceChoices = { 1.0f, 1.35f, 1.65f, 2.0f, 2.5f, 3.0f };
+        public static readonly float[] ConsumptionChoices = { 0.5f, 0.75f, 1.0f, 1.5f, 2.0f };
+        public static readonly int[] ToleranceChoices = { 0, 5, 10, 15, 20 };
+        public static readonly float[] FineMultiplierChoices = { 0.5f, 1.0f, 1.5f, 2.0f };
+    }
+
+    public sealed class ConfigurationManager
+    {
+        private const string BindingsSection = "KeyBindings";
+
+        private readonly RlsPaths paths;
+        private RlsSettings settings = new RlsSettings();
+        private KeyBindingSet bindings = new KeyBindingSet();
+
+        public ConfigurationManager(RlsPaths paths)
+        {
+            this.paths = paths;
+        }
+
+        public RlsSettings Settings { get { return settings; } }
+        public KeyBindingSet Bindings { get { return bindings; } }
+
+        public void LoadAll()
+        {
+            LoadSettings();
+            LoadBindings();
+        }
+
+        // ------------------------------------------------------------ settings
+
+        public void LoadSettings()
+        {
+            string file = paths.SettingsFile;
+            RlsSettings s = new RlsSettings();
+
+            if (!File.Exists(file))
+            {
+                settings = s;
+                SaveSettings();
+                Log.Info("Created default " + file);
+                return;
+            }
+
+            IniFile ini;
+            try
+            {
+                ini = IniFile.Load(file);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Settings.ini unreadable, restoring defaults", ex);
+                TryBackup(file, "unreadable");
+                settings = s;
+                SaveSettings();
+                return;
+            }
+
+            SettingsReader r = new SettingsReader(ini);
+            s.Language = r.Enum("General", "Language", s.Language);
+            s.Profile = r.Enum("Performance", "Profile", s.Profile);
+            s.AutosaveMinutes = r.Int("Saving", "AutosaveMinutes", s.AutosaveMinutes, 1, 60);
+            s.ShowHubBlips = r.Bool("Interface", "ShowLifeHubMapIcons", s.ShowHubBlips);
+            s.FuelGauge = r.Enum("Interface", "FuelGauge", s.FuelGauge);
+            s.ShowSpeedLimit = r.Bool("Interface", "ShowSpeedLimit", s.ShowSpeedLimit);
+
+            s.FuelEnabled = r.Bool("Fuel", "Enabled", s.FuelEnabled);
+            s.FuelPricePerLiter = r.Float("Fuel", "PricePerLiter", s.FuelPricePerLiter, 0.1f, 20f);
+            s.FuelConsumption = r.Float("Fuel", "ConsumptionMultiplier", s.FuelConsumption, 0.1f, 5f);
+            s.NpcRefuelling = r.Bool("Fuel", "NpcRefuelling", s.NpcRefuelling);
+            s.LowFuelWarningPercent = r.Int("Fuel", "LowFuelWarningPercent", s.LowFuelWarningPercent, 0, 50);
+
+            s.TrafficEnabled = r.Bool("Traffic", "Enabled", s.TrafficEnabled);
+            s.Fines = r.Enum("Traffic", "FineMode", s.Fines);
+            s.SpeedToleranceKmh = r.Int("Traffic", "SpeedToleranceKmh", s.SpeedToleranceKmh, 0, 40);
+            s.FineMultiplier = r.Float("Traffic", "FineMultiplier", s.FineMultiplier, 0.1f, 10f);
+            s.DetectSpeeding = r.Bool("Traffic", "DetectSpeeding", s.DetectSpeeding);
+            s.DetectRedLights = r.Bool("Traffic", "DetectRedLights", s.DetectRedLights);
+            s.DetectStopSigns = r.Bool("Traffic", "DetectStopSigns", s.DetectStopSigns);
+            s.DetectWrongWay = r.Bool("Traffic", "DetectWrongWay", s.DetectWrongWay);
+            s.DetectHeadlights = r.Bool("Traffic", "DetectHeadlights", s.DetectHeadlights);
+
+            s.PoliceStops = r.Bool("Police", "TrafficStops", s.PoliceStops);
+            s.NpcPoliceStops = r.Bool("Police", "NpcTrafficStops", s.NpcPoliceStops);
+            s.AccidentsEnabled = r.Bool("Accidents", "Enabled", s.AccidentsEnabled);
+            s.AccidentMinSpeedKmh = r.Int("Accidents", "MinImpactSpeedKmh", s.AccidentMinSpeedKmh, 3, 60);
+            s.NpcCallEmergency = r.Bool("Accidents", "OtherDriversCallEmergency", s.NpcCallEmergency);
+
+            s.NpcTraffic = r.Bool("NpcTraffic", "Enabled", s.NpcTraffic);
+            s.NpcMistakes = r.Bool("NpcTraffic", "Mistakes", s.NpcMistakes);
+            s.NpcYieldEmergency = r.Bool("NpcTraffic", "YieldToEmergencyVehicles", s.NpcYieldEmergency);
+            s.NpcAccidents = r.Bool("NpcTraffic", "Accidents", s.NpcAccidents);
+            s.DetectFailureToYield = r.Bool("Traffic", "DetectFailureToYield", s.DetectFailureToYield);
+
+            s.BillingIntervalMinutes = r.Int("Ownership", "BillingIntervalMinutes", s.BillingIntervalMinutes, 10, 600);
+            s.VehicleWear = r.Bool("Ownership", "VehicleWear", s.VehicleWear);
+            s.WearRate = r.Float("Ownership", "WearRate", s.WearRate, 0.1f, 5f);
+            s.ServiceIntervalKm = r.Int("Ownership", "ServiceIntervalKm", s.ServiceIntervalKm, 50, 5000);
+            s.ShowPropertiesOnMap = r.Bool("Ownership", "ShowPropertiesOnMap", s.ShowPropertiesOnMap);
+
+            s.PassengerEnabled = r.Bool("Passenger", "Enabled", s.PassengerEnabled);
+            s.TaxiEnabled = r.Bool("Taxi", "Enabled", s.TaxiEnabled);
+            s.TaxiBaseFare = r.Float("Taxi", "BaseFare", s.TaxiBaseFare, 0f, 100f);
+            s.TaxiPricePerKm = r.Float("Taxi", "PricePerKm", s.TaxiPricePerKm, 0f, 100f);
+            s.TaxiPricePerMinute = r.Float("Taxi", "PricePerMinuteWaiting", s.TaxiPricePerMinute, 0f, 20f);
+
+            s.DebugLogging = r.Bool("Debug", "DebugLogging", s.DebugLogging);
+
+            settings = s;
+            if (r.Problems || ini.MalformedLines > 0)
+            {
+                Log.Warn("Settings.ini had missing or invalid entries; kept a copy and rewrote it.");
+                TryBackup(file, "invalid");
+                SaveSettings();
+            }
+        }
+
+        public void SaveSettings()
+        {
+            RlsSettings s = settings;
+            CultureInfo inv = CultureInfo.InvariantCulture;
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("; Realistic Life Simulator - general settings / общие настройки.");
+            sb.AppendLine("; Change these in game (Life Hub > Settings) or edit here while the game is closed.");
+            sb.AppendLine("; Меняйте в игре (Центр управления > Настройки) или здесь, когда игра закрыта.");
+            sb.AppendLine();
+            sb.AppendLine("[General]");
+            sb.AppendLine("; Auto | English | Russian");
+            sb.AppendLine("Language=" + s.Language);
+            sb.AppendLine();
+            sb.AppendLine("[Performance]");
+            sb.AppendLine("; Low | Balanced | High");
+            sb.AppendLine("Profile=" + s.Profile);
+            sb.AppendLine();
+            sb.AppendLine("[Saving]");
+            sb.AppendLine("; 1-60 minutes / минут");
+            sb.AppendLine("AutosaveMinutes=" + s.AutosaveMinutes);
+            sb.AppendLine();
+            sb.AppendLine("[Interface]");
+            sb.AppendLine("ShowLifeHubMapIcons=" + B(s.ShowHubBlips));
+            sb.AppendLine("; Always | LowOnly | Off");
+            sb.AppendLine("FuelGauge=" + s.FuelGauge);
+            sb.AppendLine("ShowSpeedLimit=" + B(s.ShowSpeedLimit));
+            sb.AppendLine();
+            sb.AppendLine("[Fuel]");
+            sb.AppendLine("Enabled=" + B(s.FuelEnabled));
+            sb.AppendLine("; Dollars per liter / долларов за литр");
+            sb.AppendLine("PricePerLiter=" + s.FuelPricePerLiter.ToString("0.00", inv));
+            sb.AppendLine("; 1.0 = a full tank lasts about 1-1.5 hours of driving / полный бак примерно на 1-1,5 часа езды");
+            sb.AppendLine("ConsumptionMultiplier=" + s.FuelConsumption.ToString("0.00", inv));
+            sb.AppendLine("NpcRefuelling=" + B(s.NpcRefuelling));
+            sb.AppendLine("LowFuelWarningPercent=" + s.LowFuelWarningPercent);
+            sb.AppendLine();
+            sb.AppendLine("[Traffic]");
+            sb.AppendLine("Enabled=" + B(s.TrafficEnabled));
+            sb.AppendLine("; Witnessed = fine only when police see it / штраф только при свидетелях-полицейских");
+            sb.AppendLine("; Always = every detected violation is fined / штраф за каждое нарушение");
+            sb.AppendLine("; Off = record only / только запись в историю");
+            sb.AppendLine("FineMode=" + s.Fines);
+            sb.AppendLine("SpeedToleranceKmh=" + s.SpeedToleranceKmh);
+            sb.AppendLine("FineMultiplier=" + s.FineMultiplier.ToString("0.00", inv));
+            sb.AppendLine("DetectSpeeding=" + B(s.DetectSpeeding));
+            sb.AppendLine("DetectRedLights=" + B(s.DetectRedLights));
+            sb.AppendLine("DetectStopSigns=" + B(s.DetectStopSigns));
+            sb.AppendLine("DetectWrongWay=" + B(s.DetectWrongWay));
+            sb.AppendLine("DetectHeadlights=" + B(s.DetectHeadlights));
+            sb.AppendLine("DetectFailureToYield=" + B(s.DetectFailureToYield));
+            sb.AppendLine();
+            sb.AppendLine("[Police]");
+            sb.AppendLine("; Police pull you over for witnessed violations / полиция останавливает за замеченные нарушения");
+            sb.AppendLine("TrafficStops=" + B(s.PoliceStops));
+            sb.AppendLine("NpcTrafficStops=" + B(s.NpcPoliceStops));
+            sb.AppendLine();
+            sb.AppendLine("[Accidents]");
+            sb.AppendLine("Enabled=" + B(s.AccidentsEnabled));
+            sb.AppendLine("MinImpactSpeedKmh=" + s.AccidentMinSpeedKmh);
+            sb.AppendLine("OtherDriversCallEmergency=" + B(s.NpcCallEmergency));
+            sb.AppendLine();
+            sb.AppendLine("[NpcTraffic]");
+            sb.AppendLine("; Driver personalities and speed limits for NPCs / характеры водителей NPC и ограничения скорости");
+            sb.AppendLine("Enabled=" + B(s.NpcTraffic));
+            sb.AppendLine("Mistakes=" + B(s.NpcMistakes));
+            sb.AppendLine("YieldToEmergencyVehicles=" + B(s.NpcYieldEmergency));
+            sb.AppendLine("Accidents=" + B(s.NpcAccidents));
+            sb.AppendLine();
+            sb.AppendLine("[Ownership]");
+            sb.AppendLine("; Minutes of play between bills / минут игры между счетами");
+            sb.AppendLine("BillingIntervalMinutes=" + s.BillingIntervalMinutes);
+            sb.AppendLine("VehicleWear=" + B(s.VehicleWear));
+            sb.AppendLine("WearRate=" + s.WearRate.ToString("0.00", inv));
+            sb.AppendLine("; In-game km between services / км между ТО");
+            sb.AppendLine("ServiceIntervalKm=" + s.ServiceIntervalKm);
+            sb.AppendLine("ShowPropertiesOnMap=" + B(s.ShowPropertiesOnMap));
+            sb.AppendLine();
+            sb.AppendLine("[Passenger]");
+            sb.AppendLine("; Ask NPC drivers for a ride (Life Hub > Rides and taxi) / просить водителей NPC подвезти");
+            sb.AppendLine("Enabled=" + B(s.PassengerEnabled));
+            sb.AppendLine();
+            sb.AppendLine("[Taxi]");
+            sb.AppendLine("Enabled=" + B(s.TaxiEnabled));
+            sb.AppendLine("; Fare = BaseFare + PricePerKm x km driven + PricePerMinuteWaiting x minutes stopped in traffic (dollars)");
+            sb.AppendLine("; Тариф = посадка + цена за км x км + цена за минуту x минуты в пробке (доллары)");
+            sb.AppendLine("BaseFare=" + s.TaxiBaseFare.ToString("0.00", inv));
+            sb.AppendLine("PricePerKm=" + s.TaxiPricePerKm.ToString("0.00", inv));
+            sb.AppendLine("PricePerMinuteWaiting=" + s.TaxiPricePerMinute.ToString("0.00", inv));
+            sb.AppendLine();
+            sb.AppendLine("[Debug]");
+            sb.AppendLine("DebugLogging=" + B(s.DebugLogging));
+            FileUtil.WriteAllTextAtomic(paths.SettingsFile, sb.ToString());
+        }
+
+        private static string B(bool b) { return b ? "true" : "false"; }
+
+        private sealed class SettingsReader
+        {
+            private readonly IniFile ini;
+            public bool Problems;
+
+            public SettingsReader(IniFile ini) { this.ini = ini; }
+
+            private bool Raw(string section, string key, out string v)
+            {
+                if (ini.TryGet(section, key, out v)) return true;
+                Problems = true; // missing entry: added with its default on rewrite
+                return false;
+            }
+
+            public T Enum<T>(string section, string key, T fallback) where T : struct
+            {
+                string v;
+                if (!Raw(section, key, out v)) return fallback;
+                T result;
+                if (TryParseEnumName(v, out result)) return result;
+                Problems = true;
+                return fallback;
+            }
+
+            public int Int(string section, string key, int fallback, int min, int max)
+            {
+                string v;
+                if (!Raw(section, key, out v)) return fallback;
+                int n;
+                if (int.TryParse(v, NumberStyles.Integer, CultureInfo.InvariantCulture, out n) && n >= min && n <= max) return n;
+                Problems = true;
+                return fallback;
+            }
+
+            public float Float(string section, string key, float fallback, float min, float max)
+            {
+                string v;
+                if (!Raw(section, key, out v)) return fallback;
+                float f;
+                if (float.TryParse(v.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out f)
+                    && !float.IsNaN(f) && f >= min && f <= max) return f;
+                Problems = true;
+                return fallback;
+            }
+
+            public bool Bool(string section, string key, bool fallback)
+            {
+                string v;
+                if (!Raw(section, key, out v)) return fallback;
+                bool b;
+                if (bool.TryParse(v, out b)) return b;
+                Problems = true;
+                return fallback;
+            }
+        }
+
+        // ------------------------------------------------------------ key bindings
+
+        public void LoadBindings()
+        {
+            string file = paths.KeyBindingsFile;
+            KeyBindingSet set = new KeyBindingSet();
+
+            if (!File.Exists(file))
+            {
+                bindings = set;
+                SaveBindings();
+                Log.Info("Created " + file + " with all actions unassigned.");
+                return;
+            }
+
+            IniFile ini;
+            try
+            {
+                ini = IniFile.Load(file);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("KeyBindings.ini unreadable; all actions left unassigned", ex);
+                TryBackup(file, "unreadable");
+                bindings = set;
+                SaveBindings();
+                return;
+            }
+
+            bool problems = ini.MalformedLines > 0;
+            foreach (RlsAction a in ActionCatalog.All)
+            {
+                string v;
+                if (!ini.TryGet(BindingsSection, a.ToString(), out v))
+                {
+                    problems = true; // entry missing (e.g. added in a newer version): write it empty
+                    continue;
+                }
+                Keys k;
+                string reason;
+                if (!KeyRules.TryParseKeyName(v, out k))
+                {
+                    Log.Warn("KeyBindings.ini: '" + v + "' is not a valid key for " + a + "; left unassigned.");
+                    problems = true;
+                    continue;
+                }
+                if (k != Keys.None && !KeyRules.IsAssignable(k, out reason))
+                {
+                    Log.Warn("KeyBindings.ini: " + k + " cannot be used for " + a + " (" + reason + ")");
+                    problems = true;
+                    continue;
+                }
+                set.Set(a, k);
+            }
+
+            bindings = set;
+            if (problems)
+            {
+                TryBackup(file, "invalid");
+                SaveBindings();
+            }
+        }
+
+        public void SaveBindings()
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("; Realistic Life Simulator - keyboard shortcuts.");
+            sb.AppendLine("; All actions are unassigned by default. Assign keys in game: Life Hub > Key bindings.");
+            sb.AppendLine("; По умолчанию ни одна клавиша не назначена. Назначить: Центр управления > Клавиши.");
+            sb.AppendLine("; An empty value means the action has no key. Key names follow System.Windows.Forms.Keys.");
+            sb.AppendLine();
+            sb.AppendLine("[" + BindingsSection + "]");
+            foreach (RlsAction a in ActionCatalog.All)
+            {
+                Keys k = bindings.Get(a);
+                sb.AppendLine(a + "=" + (k == Keys.None ? "" : k.ToString()));
+            }
+            FileUtil.WriteAllTextAtomic(paths.KeyBindingsFile, sb.ToString());
+        }
+
+        // ------------------------------------------------------------ helpers
+
+        private void TryBackup(string file, string tag)
+        {
+            try
+            {
+                if (File.Exists(file))
+                {
+                    string dest = FileUtil.CopyAside(file, tag, paths.ConfigBackups);
+                    Log.Info("Kept a copy of the previous file at " + dest);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error("Could not back up " + file, ex);
+            }
+        }
+
+        private static bool TryParseEnumName<T>(string value, out T result) where T : struct
+        {
+            result = default(T);
+            if (string.IsNullOrEmpty(value)) return false;
+            foreach (string name in Enum.GetNames(typeof(T)))
+            {
+                if (string.Equals(name, value.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    result = (T)Enum.Parse(typeof(T), name);
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+}

@@ -1,0 +1,40 @@
+# Realistic Life Simulator - files that must never be committed.
+# The repository can be cloned straight into "GTA V\RealisticLifeSimulator", where the mod
+# also writes its runtime data. Everything below is created on the player's machine.
+
+# Build output
+Source/bin/
+Source/obj/
+Scripts/
+*.dll
+*.exe
+*.pdb
+
+# Runtime data written by the mod (personal saves, logs, automatic backups)
+Saves/
+Logs/
+Backups/
+*.log
+
+# Local copies of configuration with personal key choices.
+# The committed Config/*.ini files are the defaults; edit them in game instead.
+Config/*.local.ini
+Config/*.invalid-*
+Config/*.unreadable-*
+
+# Game files must never end up here
+*.rpf
+*.asi
+ScriptHookV*.dll
+dinput8.dll
+
+# Editors and OS
+.vs/
+.vscode/
+*.suo
+*.user
+Thumbs.db
+desktop.ini
+.DS_Store
+*.tmp
+*.bak
