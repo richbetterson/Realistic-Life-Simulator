@@ -77,6 +77,13 @@ Recommended first steps in the menu:
 2. Replace `GTA V\scripts\RealisticLifeSimulator.dll` with the new version.
 3. Keep the `GTA V\RealisticLifeSimulator\` folder. Settings, key bindings and saves upgrade automatically: new options are added with their defaults, your values are kept, and a copy of any rewritten file goes to `Backups\Config\`.
 
+**Updating from 0.5.x to 0.6.0:**
+- The save is upgraded from format 6 to 7 automatically (licence status fields, the property you are in). Nothing is removed.
+- `Settings.ini` gets the new sections `[Enforcement]`, `[FineAmounts]`, `[TrafficLights]`, `[SpeedLimiter]` and new entries in `[Police]` and `[Accidents]`. One value changes: `FineMode=Witnessed` (the old default) becomes `Automatic` once, because with *Witnessed* almost no fine was ever issued. Choose *Witnessed* again in *Settings > Traffic & fines* if you want it; it is then kept.
+- `KeyBindings.ini` gets an empty `ToggleSpeedLimiter=` entry; your assigned keys are kept.
+- Licence rules apply to existing points at the first start: 24 or more active points means *Revoked* (reinstatement after 3 hours of play in *Life Hub > Police & legal status*).
+- No new files are installed outside `GTA V\scripts\RealisticLifeSimulator.dll` and the mod's own folder.
+
 **Downgrading:** a save written by a newer version is opened read-only by an older version, to protect it. If you go back to an older DLL, also restore the `Saves` folder from that time (the mod keeps `Saves\Backups\`).
 
 ## 7. Building from source

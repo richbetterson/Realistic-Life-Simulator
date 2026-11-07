@@ -2,7 +2,7 @@
 
 # Features
 
-Every number on this page is taken from the source code of version 0.5.1. The source file for each system is named so you can check it.
+Every number on this page is taken from the source code of version 0.6.0. The source file for each system is named so you can check it.
 In-game testing status is in the [README](../README.md#14-testing-status).
 
 - [Core framework](#core-framework)
@@ -21,6 +21,13 @@ In-game testing status is in the [README](../README.md#14-testing-status).
 - [Taxi service](#taxi-service)
 - [Life Hub menu](#life-hub-menu)
 - [Saves and data safety](#saves-and-data-safety)
+- [Automatic traffic enforcement (0.6.0)](#automatic-traffic-enforcement-060)
+- [Police patrols (0.6.0)](#police-patrols-060)
+- [Pedestrian accidents (0.6.0)](#pedestrian-accidents-060)
+- [Licence status: valid, suspended, revoked (0.6.0)](#licence-status-valid-suspended-revoked-060)
+- [Speed limiter (0.6.0)](#speed-limiter-060)
+- [Property interiors (0.6.0)](#property-interiors-060)
+- [Shorter red-light waits (0.6.0)](#shorter-red-light-waits-060)
 
 ---
 
@@ -65,18 +72,21 @@ In-game testing status is in the [README](../README.md#14-testing-status).
 | Leaving the scene of an accident | $750 |
 | Failure to present documents | $200 |
 | Driving with a suspended licence | $1,000 |
+| Driving with a revoked licence *(0.6.0)* | $1,000 |
+| Striking a pedestrian *(0.6.0)* | $800 × severity (minor 0.5, moderate 1, severe 2, fatal 3) |
 | Evading the police | $1,500 |
 | False statement to police | $250 |
 
-- **Fine modes:** *Witnessed* (default: a police officer within 80 m with line of sight), *Always*, or *Off* (record only). Speed tolerance default 10 km/h. Each violation type can be switched off.
-- Every violation is recorded with time, street, zone and details. Fines are paid in *Life Hub > Driving record* or at a traffic stop.
+- All amounts except *Causing a collision* are configurable in `[FineAmounts]` (0.6.0).
+- **Fine modes:** *Automatic* (default since 0.6.0, see below), *Witnessed* (a police officer within 80 m with line of sight), *Always*, or *Off* (record only). Speed tolerance default 10 km/h. Each violation type can be switched off.
+- Every violation is recorded with time, street, zone and details. Fines are paid in *Life Hub > Traffic & fines* or at a traffic stop.
 - Paused during story missions. Emergency vehicles with the siren on are exempt.
 
 ## Licence, points and reputation
 `Core/PoliceRules.cs`
 
 - Michael, Franklin and Trevor each have their own licence number, insurer and policy, points, reputation, stops and warnings.
-- Fines add licence points (for example 2/4/6 for the speeding tiers). **Suspended at 12 active points.** Points expire after 2 hours of play.
+- Fines add licence points (for example 2/4/6 for the speeding tiers). **Suspended at 12 active points**, **revoked at 24** (0.6.0). Points expire after 2 hours of play. See [Licence status](#licence-status-valid-suspended-revoked-060).
 - Reputation 0–100, starting at 70. It drops with fines, warnings and accidents you cause, and recovers with distance driven without violations. It affects warnings at traffic stops and whether NPC drivers give you a ride.
 
 ## Police traffic stops
@@ -203,3 +213,84 @@ In-game testing status is in the [README](../README.md#14-testing-status).
 - 5 rolling backups and 7 daily snapshots. A save that can't be read is restored from the newest good backup; the damaged file is moved aside, never deleted.
 - Save format version 6. Older saves (versions 1–5) upgrade automatically without losing data. A save made by a newer version of the mod is never overwritten: saving is disabled to protect it.
 - Autosave every 5 minutes by default, and on script unload.
+
+## Automatic traffic enforcement (0.6.0)
+`Core/EnforcementRules.cs`, `Game/TrafficLawSystem.cs`
+
+- **Fine mode Automatic** (default): a police officer who sees the violation pulls you over (or mails the ticket if roadside stops are off or the stop cannot start). Without a witness, the violation is fined automatically ("traffic camera") only if that type is enabled in `[Enforcement]` **and** the detection is confident; otherwise it is recorded without a fine.
+
+| Violation | Camera fine by default | Confidence rule |
+|---|---|---|
+| Speeding | yes | over limit + tolerance for 3 s; one fine per episode (a new episode starts after 5 s below); after a lower limit begins, the previous limit applies for 5 s |
+| Red light | yes | two or more cars waiting beside / behind you; one waiting car = recorded only; never during an assisted green |
+| Wrong way | yes | two-way road: left of the centre line by more than 3 m with oncoming traffic; one-way road: 3+ oncoming cars |
+| Not yielding to sirens | yes | an emergency vehicle with siren stuck behind you for 6 s |
+| Stop / give way | no | ignored above 65 km/h (through roads) |
+| No headlights | no | |
+| Reckless driving (3 violations in 90 s) | never | needs an officer |
+
+- **Duplicates:** the same violation type is not recorded again within its cooldown (20 s – 5 min) or within 80 m and at least 30 s of the previous one.
+- **Notification:** violation, details (for example "84 km/h in a 50 km/h zone"), fine, points, issuer (police officer / traffic camera) and where to pay. With `AutoPayFromCash` the fine is paid at once if you have the cash.
+- Speeding 50+ km/h over is one violation at the highest tier, marked "excessive speed" (0.5 also added a reckless-driving fine).
+
+## Police patrols (0.6.0)
+`Game/PolicePatrolSystem.cs`, `Core/VehicleControlRules.cs` (`PatrolRules`)
+
+- Density *Off / Low / Normal / High*: at most 0 / 1 / 2 / 3 extra units (4 for High on the High profile; never more than 2 on the Low profile).
+- Desired police cars within 300 m: 1 / 2 / 3 in the city, one fewer in the countryside. GTA's own police are counted, so nothing is created while enough are around.
+- Every 15 s at most one unit, created at a road node 180–550 m away that you cannot see. No units during missions, with a wanted level, inside buildings, or in boats and aircraft.
+- Behaviours: **cruising patrol** (~50 km/h), **slow neighbourhood patrol** (~32 km/h, residential areas), **speed check** parked at the roadside for about 4 minutes, **foot patrol** of two officers in the city by day (Normal/High). City: police / police2 / police3, county: sheriff / sheriff2. Officers carry a pistol.
+- Released to the game when more than 450 m away and out of sight, or after 8 minutes of patrolling.
+- Patrol units witness violations, can be handed a traffic stop or an NPC stop, and are the first choice for Dispatch.
+- **Licence checks:** while you drive with a suspended or revoked licence, a police officer who can see you may start a stop for it (checked every 5 s, at most every 3 minutes).
+
+## Pedestrian accidents (0.6.0)
+`Game/AccidentSystem.cs`, `Core/PoliceRules.cs`
+
+- Detection: every 300 ms while driving above ~5 km/h, people within 7 m that your vehicle damaged (animals, people in vehicles, mission characters and the mod's own responders are excluded; a body that was already dead is ignored).
+- The pedestrian sits on the ground waiting for help. A witness calls 911 after 7–11 s (setting *Other drivers and witnesses call 911*): ambulance always, police for moderate/severe or fatal cases. Only one ambulance per scene.
+- Paramedics walk to the person (following them if they moved, re-tasked every 3 s), kneel and treat them for 16 s with GTA's medic scenarios, then the person boards the ambulance and is taken away. If the person walks more than 40 m away or no longer exists, an ambulance still on its way is cancelled. An ambulance that has not arrived after 3 minutes gives up.
+- Investigation: fault *Player* above 15 km/h or with a violation in the previous 10 s, otherwise *Shared*. Fine *Striking a pedestrian* = $800 × severity factor (halved for shared fault), 6 points (3 shared). At fault and severe: licence suspended for 1 h of play; fatal: revoked.
+- Leaving the scene: *Leaving the scene* fine when your plate was noted; after a pedestrian collision the licence is also revoked, and a fatal one adds wanted level 1.
+
+## Licence status: valid, suspended, revoked (0.6.0)
+`Core/LicenceRules.cs`, `Game/Modules.cs` (`LicenceWatchModule`)
+
+| Status | When | Ends |
+|---|---|---|
+| Valid | otherwise | |
+| Suspended | 12+ active points, or a timed police suspension (1 h of play) | when the points expire / the timer ends |
+| Revoked | 24+ active points, caught driving while suspended a second time, a fatal pedestrian collision at fault, or a pedestrian hit-and-run | only by reinstatement |
+
+- **Reinstatement** (*Life Hub > Police & legal status*): after the 3-hour waiting period (play time; extended by 1 h each time you are caught driving while revoked), with no unpaid fines, for $1,500. Clears all points.
+- Police stops and accident investigations always read this status: the officer states it, adds *Driving with a suspended / revoked licence*, never gives a warning, and escalates the status. If you refuse to hand over the licence, the officer checks it in the database anyway.
+- The status, reason, time left and counters are saved per character (save format 7).
+
+## Speed limiter (0.6.0)
+`Game/SpeedLimiter.cs`, `Core/VehicleControlRules.cs` (`SpeedLimiterRules`)
+
+- *Life Hub > Vehicle controls > Speed limiter*: on/off, current maximum, *Enter a speed...* (GTA's on-screen keyboard), −5 / +5 km/h, and which vehicle it applies to. Optional key *Speed limiter on / off* (unassigned).
+- Input: whole numbers 10–300, optionally followed by "km/h" or "км/ч". Anything else is rejected with a message and the old value is kept.
+- Units: the value is in km/h; GTA works in m/s. The vehicle gets an entity speed cap of (limit + 1.5) / 3.6 m/s, and from 1 km/h below the limit the accelerator input is ignored while moving forward, so the car settles smoothly without braking. Steering, brakes and reverse are never touched.
+- Applies to the vehicle you are driving: cars, motorcycles, bicycles, boats, trucks. Not to helicopters, planes or trains. The cap is removed from a vehicle as soon as you stop driving it, when you switch the limiter off, and when the mod unloads.
+
+## Property interiors (0.6.0)
+`Game/PropertySystem.cs`, `Game/WorldHelpers.cs`
+
+| Interior key | Used by | Fallback |
+|---|---|---|
+| LowApt | (available for custom properties) | MidApt |
+| MidApt | 3 Alta Street, Weazel Plaza | LowApt |
+| HighApt | high-end apartments and houses | MidApt |
+| Garage2 / Garage6 / Garage10 | lock-ups and garages | next garage size |
+
+- Entering: on foot, no wanted level, owned by the current character and not rented out (tours: only properties for sale). The interior is pinned and must report ready, then the player is frozen while the scene and collision stream (up to ~6 s faded), then the interior is checked. On failure the fallback interiors are tried; if none loads you stay outside with a message.
+- Inside, at the door marker: Leave (back to the front door, placed on the ground), Sleep 8 h (full health, saves), Nap 1 h, Shower, Watch TV 1 h, Garage (the car waits at the entrance), Save progress. Tours: Leave or Buy.
+- The property you are in is saved; after loading a game inside an interior the exit marker is restored.
+
+## Shorter red-light waits (0.6.0)
+`Game/TrafficLightAssist.cs`, `Core/VehicleControlRules.cs` (`TrafficLightRules`)
+
+- Condition: you are stopped at a traffic-light node, first in line (no vehicle within 12 m ahead), cross traffic has been seen moving, no siren within 60 m, and you have waited `MaxRedWaitSeconds` (default 20, choices 10–60).
+- Then the signal heads around the junction facing your axis turn green and those on the cross axis red for `AssistGreenSeconds` (default 10), then amber for 3 s, then every override is released. Cross-traffic AI cars 7–32 m from the junction and approaching it are held. Signals at a diagonal are left alone.
+- GTA's global signal cycle is not changed. No red-light violation is recorded during the assisted phase. 20 s cooldown per junction.

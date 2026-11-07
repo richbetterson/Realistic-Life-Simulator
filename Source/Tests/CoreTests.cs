@@ -8,7 +8,7 @@ using System.Text;
 using System.Windows.Forms;
 using RealisticLifeSimulator.Core;
 
-public static class CoreTests
+public static partial class CoreTests
 {
     private static int passed, failed;
 
@@ -54,6 +54,7 @@ public static class CoreTests
         Run("Passenger: stop requests, reactions and detours by attitude", RideReactionsTest);
         Run("Passenger: seats - driver seat is never a passenger seat", SeatTest);
         Run("Taxi: fare, rounding and cash/debt settlement", TaxiFareTest);
+        RunV060();
 
         Console.WriteLine();
         Console.WriteLine("Passed: " + passed + "  Failed: " + failed);
@@ -281,9 +282,10 @@ public static class CoreTests
         Check(c.Settings.Profile == PerformanceProfileKind.High, "old profile lost");
         Check(c.Settings.AutosaveMinutes == 15, "old autosave lost");
         Check(c.Settings.FuelEnabled && c.Settings.TrafficEnabled, "new defaults wrong");
-        Check(c.Settings.Fines == FineMode.Witnessed, "default fine mode wrong");
+        // 0.6.0: the default fine mode is Automatic (Witnessed almost never fined anything).
+        Check(c.Settings.Fines == FineMode.Automatic, "default fine mode wrong: " + c.Settings.Fines);
         string text = File.ReadAllText(p.SettingsFile);
-        Check(text.Contains("[Fuel]") && text.Contains("FineMode=Witnessed") && text.Contains("Language=Auto"), "new sections not written");
+        Check(text.Contains("[Fuel]") && text.Contains("FineMode=Automatic") && text.Contains("Language=Auto"), "new sections not written");
 
         c.Settings.Language = LanguageSetting.Russian;
         c.Settings.FuelPricePerLiter = 2.5f;
@@ -812,7 +814,7 @@ public static class CoreTests
         Check(s.Save(), "save failed " + s.LastError);
         SaveManager s2 = new SaveManager(p, "test");
         s2.Load();
-        Check(s2.Data.SchemaVersion == 6 && s2.Data.Passenger.Rides == 3 && s2.Data.Passenger.TaxiRides == 2
+        Check(s2.Data.SchemaVersion == SaveData.CurrentSchema && s2.Data.Passenger.Rides == 3 && s2.Data.Passenger.TaxiRides == 2
               && Math.Abs(s2.Data.Passenger.TaxiSpent - 41) < 0.001 && Math.Abs(s2.Data.Passenger.DistanceKm - 12.5) < 0.001, "stats lost");
         Check(s2.Data.Transactions.Count == 1 && s2.Data.Transactions[0].Category == "Taxi", "taxi receipt lost");
     }

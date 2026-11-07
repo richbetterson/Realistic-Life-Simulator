@@ -10,6 +10,9 @@ Scripts/
 *.exe
 *.pdb
 
+# Release packages (uploaded to GitHub Releases, not committed)
+Release/
+
 # Runtime data written by the mod (personal saves, logs, automatic backups)
 Saves/
 Logs/

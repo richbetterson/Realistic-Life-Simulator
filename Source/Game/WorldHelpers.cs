@@ -139,6 +139,110 @@ namespace RealisticLifeSimulator.Game
         {
             N.Call(ADD_TO_CLOCK_TIME, hours, 0, 0);
         }
+
+        // ------------------------------------------------------------ interiors (0.6.0)
+
+        private const ulong GET_INTERIOR_AT_COORDS = 0xB0F7F8663821D9C3;
+        private const ulong PIN_INTERIOR_IN_MEMORY = 0x2CA429C029CCF247;
+        private const ulong IS_INTERIOR_READY = 0x6726BDCCC1932F0E;
+        private const ulong UNPIN_INTERIOR = 0x261CCE7EED010641;
+        private const ulong HAS_COLLISION_LOADED_AROUND_ENTITY = 0xE9676F61BC0B3321;
+        private const ulong NEW_LOAD_SCENE_START_SPHERE = 0xACCFB4ACF53551B0;
+        private const ulong NEW_LOAD_SCENE_STOP = 0xC197616D221FF4A4;
+        private const ulong IS_NEW_LOAD_SCENE_LOADED = 0x01B8247A7A8B9AD1;
+        private const ulong FREEZE_ENTITY_POSITION = 0x428CA6DBD1094446;
+        private const ulong GET_GROUND_Z_FOR_3D_COORD = 0xC906A7DAB05C8D2B;
+
+        public static int InteriorAt(Vector3 at)
+        {
+            return N.Call<int>(GET_INTERIOR_AT_COORDS, at.X, at.Y, at.Z);
+        }
+
+        public static bool IsInInterior(Ped p)
+        {
+            return p != null && p.Exists() && N.Call<int>(GET_INTERIOR_FROM_ENTITY, p) != 0;
+        }
+
+        // The 0.5 version moved the player, waited 1.2 s and gave up if GTA had not attached the
+        // player to the interior yet - which is why entering often "failed". Now the interior is
+        // pinned and must report ready, the scene and collision are streamed while the player is
+        // frozen (no falling through the floor), and only then is the result checked. The screen
+        // stays faded for at most ~6 s. On failure the player is put back where they were.
+        public static bool MoveIntoInterior(Vector3 to, float heading, bool fadeIn, out int pinnedInterior)
+        {
+            pinnedInterior = 0;
+            Ped p = GTA.Game.Player.Character;
+            Vector3 from = p.Position;
+            float fromHeading = p.Heading;
+            FadeOut();
+            int id = InteriorAt(to);
+            if (id != 0)
+            {
+                N.Call(PIN_INTERIOR_IN_MEMORY, id);
+                Wait(() => N.Call<bool>(IS_INTERIOR_READY, id), 4000);
+            }
+            N.Call(NEW_LOAD_SCENE_START_SPHERE, to.X, to.Y, to.Z, 25f, 0);
+            N.Call(FREEZE_ENTITY_POSITION, p, true);
+            N.Call(REQUEST_COLLISION_AT_COORD, to.X, to.Y, to.Z);
+            p.Position = to;
+            p.Heading = heading;
+            Wait(() => N.Call<bool>(HAS_COLLISION_LOADED_AROUND_ENTITY, p) && N.Call<bool>(IS_NEW_LOAD_SCENE_LOADED), 5000);
+            N.Call(NEW_LOAD_SCENE_STOP);
+            bool ok = Wait(() => N.Call<int>(GET_INTERIOR_FROM_ENTITY, p) != 0, 1500)
+                      || (id != 0 && N.Call<bool>(IS_INTERIOR_READY, id) && N.Call<bool>(HAS_COLLISION_LOADED_AROUND_ENTITY, p));
+            if (!ok)
+            {
+                if (id != 0) N.Call(UNPIN_INTERIOR, id);
+                N.Call(REQUEST_COLLISION_AT_COORD, from.X, from.Y, from.Z);
+                p.Position = from;
+                p.Heading = fromHeading;
+                Script.Wait(300);
+                N.Call(FREEZE_ENTITY_POSITION, p, false);
+                Log.Warn(string.Format("Interior not available at {0:0.0},{1:0.0},{2:0.0} (id {3}); returned the player", to.X, to.Y, to.Z, id));
+                FadeIn();
+                return false;
+            }
+            N.Call(FREEZE_ENTITY_POSITION, p, false);
+            pinnedInterior = id;
+            if (fadeIn) FadeIn();
+            return true;
+        }
+
+        public static void Unpin(int interior)
+        {
+            if (interior != 0) N.Call(UNPIN_INTERIOR, interior);
+        }
+
+        // Back outside: wait for collision, then put the player on the ground (never under it).
+        public static void MoveOutside(Vector3 to, float heading)
+        {
+            Ped p = GTA.Game.Player.Character;
+            FadeOut();
+            N.Call(FREEZE_ENTITY_POSITION, p, true);
+            N.Call(REQUEST_COLLISION_AT_COORD, to.X, to.Y, to.Z);
+            p.Position = to;
+            p.Heading = heading;
+            Wait(() => N.Call<bool>(HAS_COLLISION_LOADED_AROUND_ENTITY, p), 4000);
+            OutputArgument gz = new OutputArgument();
+            if (N.Call<bool>(GET_GROUND_Z_FOR_3D_COORD, to.X, to.Y, to.Z + 3f, gz, false, false))
+            {
+                float z = gz.GetResult<float>();
+                if (z > to.Z - 6f && z < to.Z + 4f) p.Position = new Vector3(to.X, to.Y, z + 0.05f);
+            }
+            N.Call(FREEZE_ENTITY_POSITION, p, false);
+            FadeIn();
+        }
+
+        private static bool Wait(Func<bool> done, int timeoutMs)
+        {
+            int start = Environment.TickCount;
+            while (unchecked(Environment.TickCount - start) < timeoutMs)
+            {
+                if (done()) return true;
+                Script.Wait(50);
+            }
+            return done();
+        }
     }
 
     public static class Spots

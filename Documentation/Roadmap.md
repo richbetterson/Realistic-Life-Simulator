@@ -8,6 +8,7 @@
 | 4 | NPC personalities, speed limits, mistakes, siren yielding, NPC accidents, city incidents | Done |
 | 5 | Properties, garages, vehicle ownership, wear, insurance, repair shops, bills | Done |
 | 5.1 | NPC passenger rides and taxi service | Done (not yet run in game) |
+| 0.6.0 | Automatic traffic enforcement, police patrols, pedestrian accidents, licence status, speed limiter, usable interiors, shorter red-light waits, bug fixes | Done, released as 1.0.0 |
 | 6 | Economy, banking and jobs | Planned |
 | 7 | Emergency services and roadside assistance | Planned |
 | 8 | World events and weather realism | Planned |
@@ -27,3 +28,5 @@
 - Source must stay C# 5 compatible (Windows' built-in compiler).
 - Every visible string uses `L.S("English", "Русский")`. Never add a string in one language only.
 - Game-independent rules live in `Source/Core` and are unit tested; game code lives in `Source/Game`.
+- Licence status is decided only by `LicenceRules`; fines only through `TrafficLawSystem.AddViolation` and `EnforcementRules`.
+- Mod-created entities that another system takes over are handed over explicitly (`PolicePatrolSystem.HandOver`), so every entity has exactly one owner that releases it.

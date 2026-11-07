@@ -19,7 +19,8 @@ namespace RealisticLifeSimulator.Core
         // 1 = Phase 1. 2 = Phase 2 (fuel, transactions, violations). 3 = Phase 3 (licences, accidents).
         // 4 = Phase 4 (city incidents). 5 = Phase 5 (properties, owned vehicles, bills).
         // 6 = passenger rides and taxi statistics.
-        public const int CurrentSchema = 6;
+        // 7 = 0.6.0: licence status (suspension timer, revocation), property the player is inside.
+        public const int CurrentSchema = 7;
         public const int MaxIncidents = 50;
         public const int MaxAccidents = 100;
         public const int MaxTransactions = 500;
@@ -50,6 +51,8 @@ namespace RealisticLifeSimulator.Core
         public List<CityIncident> Incidents;
         public PassengerStats Passenger;
         public bool PassengerNoticeShown;
+        public string InsidePropertyId;        // schema 7: property interior the player is in ("" = outside)
+        public bool V060NoticeShown;
 
         public SaveData()
         {
@@ -181,9 +184,16 @@ namespace RealisticLifeSimulator.Core
             foreach (DriverProfile p in Profiles)
             {
                 if (p.Points == null) p.Points = new List<PointEntry>();
+                p.Points.RemoveAll(e => e == null || double.IsNaN(e.ExpiresAtPlaySeconds));
                 if (double.IsNaN(p.Reputation)) p.Reputation = PoliceRules.StartingReputation;
                 p.Reputation = Math.Max(0, Math.Min(100, p.Reputation));
+                // schema 6 -> 7: licence status fields start empty (status still follows points)
+                if (double.IsNaN(p.SuspendedUntilPlay) || p.SuspendedUntilPlay < 0) p.SuspendedUntilPlay = 0;
+                if (double.IsNaN(p.RevokedAtPlay) || p.RevokedAtPlay < 0) p.RevokedAtPlay = 0;
+                if (double.IsNaN(p.RevocationEndsPlay) || p.RevocationEndsPlay < 0) p.RevocationEndsPlay = 0;
+                if (p.StatusReason == null) p.StatusReason = "";
             }
+            if (InsidePropertyId == null) InsidePropertyId = "";
             Accidents.RemoveAll(a => a == null);
             if (Accidents.Count > MaxAccidents) Accidents.RemoveRange(0, Accidents.Count - MaxAccidents);
 

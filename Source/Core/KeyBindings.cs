@@ -20,7 +20,8 @@ namespace RealisticLifeSimulator.Core
         RequestRoadsideAssistance,
         StartJob,
         PassengerMenu,
-        CallTaxi
+        CallTaxi,
+        ToggleSpeedLimiter   // 0.6.0, unassigned by default
     }
 
     public static class ActionCatalog
@@ -41,6 +42,7 @@ namespace RealisticLifeSimulator.Core
                 case RlsAction.StartJob: return L.S("Start job", "Начать работу");
                 case RlsAction.PassengerMenu: return L.S("Passenger / rides menu", "Меню поездок пассажиром");
                 case RlsAction.CallTaxi: return L.S("Call a taxi", "Вызвать такси");
+                case RlsAction.ToggleSpeedLimiter: return L.S("Speed limiter on / off", "Ограничитель скорости вкл / выкл");
             }
             return a.ToString();
         }

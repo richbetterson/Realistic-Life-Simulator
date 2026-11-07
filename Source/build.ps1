@@ -3,14 +3,18 @@
 #   powershell -ExecutionPolicy Bypass -File build.ps1 -Install   also copy the DLL into the game's scripts folder
 # Uses the C# compiler included with Windows (.NET Framework 4.x). No downloads needed.
 
-param([switch]$Install)
+#   powershell -ExecutionPolicy Bypass -File build.ps1 -Shvdn "D:\Grand Theft Auto V\ScriptHookVDotNet3.dll"
+#       build a copy of the project that is not inside the GTA V folder (no -Install then)
+
+param([switch]$Install, [string]$Shvdn = '')
 $ErrorActionPreference = 'Stop'
 
 $src  = $PSScriptRoot
 $root = Split-Path $src -Parent
 $game = Split-Path $root -Parent
 $csc  = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-$api  = Join-Path $game 'ScriptHookVDotNet3.dll'
+$api  = if ($Shvdn -ne '') { $Shvdn } else { Join-Path $game 'ScriptHookVDotNet3.dll' }
+if ($Install -and $Shvdn -ne '') { throw '-Install only works when the project sits inside the GTA V folder.' }
 $bin  = Join-Path $src 'bin'
 $dll  = Join-Path $bin 'RealisticLifeSimulator.dll'
 $test = Join-Path $bin 'RlsCoreTests.exe'

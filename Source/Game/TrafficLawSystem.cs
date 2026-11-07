@@ -1,18 +1,23 @@
-// Realistic Life Simulator - traffic law detection for the player.
+// Realistic Life Simulator - traffic law detection and enforcement for the player.
 // Runs only while the player drives a road vehicle. Light checks every 250 ms, road
 // lookups (street name, zone, road node) once per second.
 //
 // Detection methods (GTA has no traffic-law data, so some are heuristics):
-//  * Speeding     - road type from street name, zone and road-node flags; sustained 3 s.
+//  * Speeding     - road type from street name, zone and road-node flags; sustained 3 s,
+//                   one violation per episode, grace period after the limit drops.
 //  * Red light    - entering a traffic-light junction at speed while AI cars travelling the
 //                   same direction beside/behind the player are stopped and waiting.
-//  * Stop / yield - passing a give-way junction without slowing below 12 km/h.
+//  * Stop / yield - passing a give-way junction without slowing below 12 km/h (not on
+//                   through roads above 65 km/h, where GTA's flags misfire).
 //  * Wrong way    - two-way road: driving on the left of the centre line for 4 s;
 //                   one-way road: several AI cars coming towards the player in the same road.
 //  * Headlights   - driving at night with lights off for 15 s.
-//  * Reckless     - three or more moving violations within 90 s, or 50+ km/h over the limit.
-// Fines: Witnessed (default) = only when a police officer can see it.
-// Police pull-overs are added in Phase 3.
+//  * Reckless     - three or more moving violations within 90 s.
+//
+// Enforcement (0.6.0, EnforcementRules): FineMode Automatic (default) = a witnessing officer
+// pulls you over; without a witness, reliable detections are fined automatically ("traffic
+// camera") and the rest is recorded. Every fine is shown with its reason and amount, added to
+// the unpaid fines (Life Hub > Traffic & Fines) and protected against duplicates.
 
 using System;
 using System.Collections.Generic;
@@ -28,6 +33,7 @@ namespace RealisticLifeSimulator.Game
     {
         private readonly RlsMain main;
         private SpeedLimitTable limits;
+        private TrafficLightAssist lights;
 
         // road info (refreshed every second)
         private int nextRoadCheck;
@@ -39,9 +45,8 @@ namespace RealisticLifeSimulator.Game
         private bool roadKnown;
 
         // speeding episode
-        private int overSince = -1, underSince = -1;
-        private int maxOver;
-        private bool speedingReported;
+        private readonly SpeedingMonitor speeding = new SpeedingMonitor();
+        private readonly ViolationDeduper dedupe = new ViolationDeduper();
 
         // junctions
         private Vector3 lastLightJunction, lastGiveWayJunction;
@@ -56,6 +61,12 @@ namespace RealisticLifeSimulator.Game
         private readonly Dictionary<ViolationType, int> cooldownUntil = new Dictionary<ViolationType, int>();
         private readonly List<int> recentMoving = new List<int>();
 
+        // licence while driving
+        private int lastVehicleHandle;
+        private int nextLicenceCheck;
+        private int lastLicenceReminder = -1000000;
+        private readonly Random rng = new Random();
+
         public TrafficLawSystem(RlsMain main)
         {
             this.main = main;
@@ -67,13 +78,18 @@ namespace RealisticLifeSimulator.Game
         public int CurrentLimit { get { return roadKnown ? currentLimit : 0; } }
         public RoadCategory CurrentCategory { get { return currentCategory; } }
         public bool IsSpeeding { get; private set; }
+        public TrafficLightAssist Lights { get { return lights; } }
 
         public void Start()
         {
             limits = SpeedLimitTable.LoadOrCreate(main.Paths.SpeedLimitsFile);
+            lights = new TrafficLightAssist(main);
         }
 
-        public void Shutdown() { }
+        public void Shutdown()
+        {
+            if (lights != null) lights.Reset();
+        }
 
         public void Update()
         {
@@ -82,15 +98,17 @@ namespace RealisticLifeSimulator.Game
             Vehicle v = p != null && p.Exists() ? p.CurrentVehicle : null;
             if (!set.TrafficEnabled || v == null || !v.Exists() || v.Driver != p || GTA.Game.IsPaused || N.InMission())
             {
-                ResetEpisode();
+                speeding.ClearLimit();
                 roadKnown = false;
                 IsSpeeding = false;
+                if (lights != null) lights.Idle();
+                if (v == null) lastVehicleHandle = 0;
                 return;
             }
             int cls = (int)v.ClassType;
-            if (cls == 13 || cls == 14 || cls == 15 || cls == 16 || cls == 21) { roadKnown = false; return; }
+            if (cls == 13 || cls == 14 || cls == 15 || cls == 16 || cls == 21) { roadKnown = false; IsSpeeding = false; speeding.ClearLimit(); return; }
             // Emergency vehicles on duty are exempt.
-            if (cls == 18 && N.Call<bool>(N.IS_VEHICLE_SIREN_ON, v)) { ResetEpisode(); IsSpeeding = false; return; }
+            if (cls == 18 && N.Call<bool>(N.IS_VEHICLE_SIREN_ON, v)) { speeding.Reset(); IsSpeeding = false; return; }
 
             int now = Environment.TickCount;
             Vector3 pos = v.Position;
@@ -101,6 +119,12 @@ namespace RealisticLifeSimulator.Game
             speedHistory[historyIndex] = kmh;
             historyIndex = (historyIndex + 1) % speedHistory.Length;
 
+            if (v.Handle != lastVehicleHandle)
+            {
+                lastVehicleHandle = v.Handle;
+                OnEnteredVehicle(prof, now);
+            }
+
             if (unchecked(now - nextRoadCheck) >= 0)
             {
                 nextRoadCheck = now + 1000;
@@ -110,8 +134,14 @@ namespace RealisticLifeSimulator.Game
                 if (set.DetectFailureToYield) CheckYield(v, kmh, now);
             }
 
-            if (set.DetectSpeeding) CheckSpeeding(v, kmh, now, set);
+            if (lights != null) lights.Update(v, pos, kmh, nodeFlags, now);
+            if (set.DetectSpeeding) CheckSpeeding(v, kmh, now, set); else IsSpeeding = false;
             if (set.DetectRedLights || set.DetectStopSigns) CheckJunction(v, pos, kmh, now, set);
+            if (unchecked(now - nextLicenceCheck) >= 0)
+            {
+                nextLicenceCheck = now + 5000;
+                CheckLicenceWhileDriving(prof, v, kmh, now);
+            }
         }
 
         // ------------------------------------------------------------ road info
@@ -138,42 +168,36 @@ namespace RealisticLifeSimulator.Game
             roadKnown = true;
         }
 
+        public bool IsRuralZone(Vector3 pos)
+        {
+            string zone = N.Call<string>(N.GET_NAME_OF_ZONE, pos.X, pos.Y, pos.Z) ?? "";
+            RoadCategory cat;
+            limits.Classify("", zone, 0, out cat);
+            return cat == RoadCategory.Rural;
+        }
+
+        public bool IsResidentialZone(Vector3 pos)
+        {
+            string zone = N.Call<string>(N.GET_NAME_OF_ZONE, pos.X, pos.Y, pos.Z) ?? "";
+            RoadCategory cat;
+            limits.Classify("", zone, 0, out cat);
+            return cat == RoadCategory.Residential;
+        }
+
         // ------------------------------------------------------------ speeding
 
         private void CheckSpeeding(Vehicle v, float kmh, int now, RlsSettings set)
         {
-            if (!roadKnown) { IsSpeeding = false; return; }
-            int threshold = currentLimit + set.SpeedToleranceKmh;
-            IsSpeeding = kmh > currentLimit + 2;
-
-            if (kmh > threshold)
-            {
-                underSince = -1;
-                if (overSince < 0) { overSince = now; maxOver = 0; }
-                maxOver = Math.Max(maxOver, (int)(kmh - currentLimit));
-                if (!speedingReported && unchecked(now - overSince) >= 3000)
-                {
-                    speedingReported = true;
-                    string details = L.F("{0:0} km/h in a {1} km/h zone ({2})", "{0:0} км/ч при ограничении {1} км/ч ({2})",
-                        currentLimit + maxOver, currentLimit, TrafficRules.CategoryName(currentCategory));
-                    Report(ViolationType.Speeding, maxOver, details, now, 60000);
-                    if (maxOver >= 50) Report(ViolationType.Reckless, 0,
-                        L.F("{0} km/h over the limit", "Превышение на {0} км/ч", maxOver), now, 120000);
-                }
-            }
-            else if (overSince >= 0)
-            {
-                if (underSince < 0) underSince = now;
-                if (unchecked(now - underSince) > 5000) ResetEpisode();
-            }
-        }
-
-        private void ResetEpisode()
-        {
-            overSince = -1;
-            underSince = -1;
-            maxOver = 0;
-            speedingReported = false;
+            int over;
+            bool report = speeding.Feed(kmh, roadKnown ? currentLimit : 0, set.SpeedToleranceKmh, now, out over);
+            IsSpeeding = roadKnown && speeding.IsOver;
+            if (!report) return;
+            int limit = speeding.EffectiveLimit(now);
+            string details = L.F("{0:0} km/h in a {1} km/h zone ({2})", "{0:0} км/ч при ограничении {1} км/ч ({2})",
+                limit + over, limit, TrafficRules.CategoryName(currentCategory));
+            if (over >= EnforcementRules.ExcessiveSpeedKmh)
+                details += L.S(" - excessive speed", " - значительное превышение");
+            Report(ViolationType.Speeding, over, details, now, 60000, true);
         }
 
         // ------------------------------------------------------------ junctions
@@ -192,11 +216,13 @@ namespace RealisticLifeSimulator.Game
             if (light && set.DetectRedLights && kmh > 15f && N.Dist2D(node, lastLightJunction) > 30f)
             {
                 lastLightJunction = node;
-                int waiting = CountWaitingCars(v);
-                if (waiting > 0)
+                bool assist = lights != null && lights.GreenForPlayer;
+                int waiting = assist ? 0 : CountWaitingCars(v);
+                if (EnforcementRules.IsRedLight(waiting, kmh, assist))
                 {
                     Report(ViolationType.RedLight, 0,
-                        L.F("{0} car(s) were stopped at the light", "Другие машины стояли на светофоре: {0}", waiting), now, 20000);
+                        L.F("{0} car(s) were stopped at the light", "Другие машины стояли на светофоре: {0}", waiting), now, 20000,
+                        EnforcementRules.RedLightConfident(waiting, kmh));
                 }
             }
 
@@ -205,10 +231,10 @@ namespace RealisticLifeSimulator.Game
                 lastGiveWayJunction = node;
                 float min = float.MaxValue;
                 foreach (float s in speedHistory) min = Math.Min(min, s);
-                if (min > 12f)
+                if (EnforcementRules.IsStopSign(min, kmh))
                 {
                     Report(ViolationType.StopSign, 0,
-                        L.F("Lowest speed before the junction: {0:0} km/h", "Минимальная скорость перед перекрёстком: {0:0} км/ч", min), now, 30000);
+                        L.F("Lowest speed before the junction: {0:0} km/h", "Минимальная скорость перед перекрёстком: {0:0} км/ч", min), now, 30000, false);
                 }
             }
         }
@@ -239,6 +265,7 @@ namespace RealisticLifeSimulator.Game
         private void CheckWrongWay(Vehicle v, Vector3 pos, float kmh, int now)
         {
             bool wrong = false;
+            bool confident = false;
             if (roadKnown && kmh > 20f && (nodeFlags & (TrafficRules.NodeJunction | TrafficRules.NodeOffRoad)) == 0)
             {
                 OutputArgument p1 = new OutputArgument(), p2 = new OutputArgument(), lf = new OutputArgument(),
@@ -261,23 +288,29 @@ namespace RealisticLifeSimulator.Game
                             float rx = pos.X - a.X, ry = pos.Y - a.Y;
                             float left = tx * ry - ty * rx; // > 0 = left of the line
                             wrong = left > 2.0f && left < 12f;
+                            confident = wrong && left > 3.0f && OncomingCars(v, pos) >= 1; // geometry and oncoming traffic agree
                         }
                         else if (lanesF == 0 || lanesB == 0)
                         {
-                            wrong = OncomingCars(v, pos) >= 2;
+                            int oncoming = OncomingCars(v, pos);
+                            wrong = oncoming >= 2;
+                            confident = oncoming >= 3;
                         }
                     }
                 }
             }
 
             if (!wrong) { wrongWaySince = -1; return; }
-            if (wrongWaySince < 0) { wrongWaySince = now; return; }
+            if (wrongWaySince < 0) { wrongWaySince = now; wrongWayConfident = confident; return; }
+            wrongWayConfident |= confident;
             if (unchecked(now - wrongWaySince) >= 4000)
             {
                 wrongWaySince = -1;
-                Report(ViolationType.WrongWay, 0, string.IsNullOrEmpty(currentStreet) ? "" : currentStreet, now, 60000);
+                Report(ViolationType.WrongWay, 0, string.IsNullOrEmpty(currentStreet) ? "" : currentStreet, now, 60000, wrongWayConfident);
             }
         }
+
+        private bool wrongWayConfident;
 
         private static int OncomingCars(Vehicle player, Vector3 pos)
         {
@@ -330,7 +363,7 @@ namespace RealisticLifeSimulator.Game
             {
                 yieldSince = -1;
                 Report(ViolationType.FailureToYieldEmergency, 0,
-                    L.S("An emergency vehicle with its siren on was stuck behind you", "За вами ехал спецтранспорт с сиреной и не мог проехать"), now, 90000);
+                    L.S("An emergency vehicle with its siren on was stuck behind you", "За вами ехал спецтранспорт с сиреной и не мог проехать"), now, 90000, true);
             }
         }
 
@@ -343,23 +376,60 @@ namespace RealisticLifeSimulator.Game
             if (!night || kmh < 10f) { lightsOffSince = -1; return; }
             OutputArgument on = new OutputArgument(), high = new OutputArgument();
             N.Call(N.GET_VEHICLE_LIGHTS_STATE, v, on, high);
-            bool lights = on.GetResult<bool>() || high.GetResult<bool>();
-            if (lights) { lightsOffSince = -1; return; }
+            bool lightsOn = on.GetResult<bool>() || high.GetResult<bool>();
+            if (lightsOn) { lightsOffSince = -1; return; }
             if (lightsOffSince < 0) { lightsOffSince = now; return; }
             if (unchecked(now - lightsOffSince) >= 15000)
             {
                 lightsOffSince = -1;
-                Report(ViolationType.NoHeadlights, 0, "", now, 300000);
+                Report(ViolationType.NoHeadlights, 0, "", now, 300000, false);
             }
+        }
+
+        // ------------------------------------------------------------ licence while driving
+
+        private void OnEnteredVehicle(DriverProfile prof, int now)
+        {
+            double play = main.Saves.Data.Stats.TotalPlayTimeSeconds;
+            LicenceStatus st = LicenceRules.Status(prof, play);
+            if (st == LicenceStatus.Valid || unchecked(now - lastLicenceReminder) < 300000) return;
+            lastLicenceReminder = now;
+            main.Notify(st == LicenceStatus.Revoked
+                ? L.S("~r~Your driving licence is revoked.~s~ If the police check you, you will be fined and the revocation is extended.",
+                      "~r~Ваши права отозваны.~s~ При проверке полицией - штраф и продление лишения.")
+                : L.S("~o~Your driving licence is suspended.~s~ Driving now is an offence if the police check you.",
+                      "~o~Ваши права приостановлены.~s~ Если полиция проверит вас, это будет нарушением."));
+        }
+
+        // Patrols run plate / licence checks on cars they follow (Settings: Police > LicenceChecks).
+        private void CheckLicenceWhileDriving(DriverProfile prof, Vehicle v, float kmh, int now)
+        {
+            RlsSettings set = main.Config.Settings;
+            if (!set.PatrolLicenceChecks || !set.PoliceStops || kmh < 15f || main.Police == null || main.Police.StopActive) return;
+            double play = main.Saves.Data.Stats.TotalPlayTimeSeconds;
+            LicenceStatus st = LicenceRules.Status(prof, play);
+            if (st == LicenceStatus.Valid) return;
+            Ped witness = FindWitness();
+            if (witness == null || witness.CurrentVehicle == null) return;
+            if (rng.NextDouble() > 0.35) return; // a check is not instant
+            ViolationType t = st == LicenceStatus.Revoked ? ViolationType.DrivingWhileRevoked : ViolationType.SuspendedLicence;
+            int until;
+            if (cooldownUntil.TryGetValue(t, out until) && unchecked(now - until) < 0) return;
+            cooldownUntil[t] = now + 180000;
+            if (main.Police.TryStartStop(t, 0, L.S("Plate check: the registered driver has no valid licence", "Проверка номера: у владельца нет действующих прав"), LocationText(), witness))
+                Log.Info("Licence check by patrol: " + st + ", traffic stop started");
         }
 
         // ------------------------------------------------------------ recording and fines
 
-        private void Report(ViolationType type, int overKmh, string details, int now, int cooldownMs)
+        private void Report(ViolationType type, int overKmh, string details, int now, int cooldownMs, bool confident)
         {
             if (main.Police != null && main.Police.StopActive) return; // already being dealt with
             int until;
             if (cooldownUntil.TryGetValue(type, out until) && unchecked(now - until) < 0) return;
+            Ped pc = GTA.Game.Player.Character;
+            Vector3 at = pc.Position;
+            if (!dedupe.Allow(type, at.X, at.Y, now, Math.Max(cooldownMs, 30000))) return;
             cooldownUntil[type] = now + cooldownMs;
 
             bool moving = type != ViolationType.NoHeadlights && type != ViolationType.Reckless;
@@ -368,29 +438,52 @@ namespace RealisticLifeSimulator.Game
             RlsSettings set = main.Config.Settings;
             Ped witness = FindWitness();
             bool witnessed = witness != null;
-            bool fined = set.Fines == FineMode.Always || (set.Fines == FineMode.Witnessed && witnessed);
+            FineDecision decision = EnforcementRules.Decide(set.Fines, type, witnessed, set.PoliceStops, set.Auto, confident);
 
             // A police car saw it: the officer pulls the player over and decides at the roadside.
-            if (fined && witnessed && set.PoliceStops && main.Police != null
-                && main.Police.TryStartStop(type, overKmh, details ?? "", LocationText(), witness))
+            if (decision == FineDecision.PoliceStop)
             {
-                Log.Info("Violation " + type + " witnessed; traffic stop started");
-                TrackRepeated(moving, now);
-                return;
+                if (main.Police != null && main.Police.TryStartStop(type, overKmh, details ?? "", LocationText(), witness))
+                {
+                    Log.Info("Violation " + type + " witnessed; traffic stop started");
+                    TrackRepeated(moving, now);
+                    return;
+                }
+                decision = FineDecision.Ticket; // the officer could not stop you: the ticket is mailed
             }
 
-            double fine = fined ? Math.Round(TrafficRules.BaseFine(type, overKmh) * set.FineMultiplier) : 0;
-            int points = fine > 0 ? PoliceRules.PointsFor(type, overKmh) : 0;
+            bool ticket = decision == FineDecision.Ticket;
+            double fine = ticket ? Math.Round(TrafficRules.BaseFine(type, overKmh) * set.FineMultiplier) : 0;
+            int points = ticket ? PoliceRules.PointsFor(type, overKmh) : 0;
             ViolationRecord r = AddViolation(type, details, fine, witnessed, points, false, LocationText());
+            bool paidNow = ticket && fine > 0 && set.Auto.AutoPayFromCash && TryPayNow(r);
 
             string msg = "~o~" + TrafficRules.Name(type) + "~s~";
             if (!string.IsNullOrEmpty(details)) msg += "~n~" + details;
-            if (fine > 0) msg += "~n~" + L.F("Fine: {0}, {1} point(s) (pay in the Life Hub)", "Штраф: {0}, баллов: {1} (оплата в центре управления)", L.Money(fine), points);
-            else if (set.Fines == FineMode.Witnessed) msg += "~n~" + L.S("No police saw it - recorded only.", "Полиция не видела - только запись.");
+            if (ticket && fine > 0)
+            {
+                msg += "~n~" + L.F("Fine {0}, {1} point(s) - {2}.", "Штраф {0}, баллов: {1} - {2}.",
+                    L.Money(fine), points, EnforcementRules.SourceName(witnessed));
+                msg += "~n~" + (paidNow ? L.S("Paid from cash.", "Оплачено наличными.")
+                                        : L.S("Pay in Life Hub > Traffic & Fines.", "Оплата: центр управления > Штрафы и ПДД."));
+            }
+            else if (set.Fines == FineMode.Off) msg += "~n~" + L.S("Recorded only (fines are off).", "Только запись (штрафы выключены).");
+            else msg += "~n~" + L.S("Recorded, no fine: not confirmed by police or camera.", "Записано без штрафа: не подтверждено полицией или камерой.");
             main.Notify(msg);
-            Log.Info(string.Format(CultureInfo.InvariantCulture, "Violation {0} ({1}) at {2}, fine {3}, witnessed {4}",
-                type, r.Details, r.Location, fine, witnessed));
+            Log.Info(string.Format(CultureInfo.InvariantCulture, "Violation {0} ({1}) at {2}, decision {3}, fine {4}, witnessed {5}, confident {6}",
+                type, r.Details, r.Location, decision, fine, witnessed, confident));
             TrackRepeated(moving, now);
+        }
+
+        private bool TryPayNow(ViolationRecord r)
+        {
+            int amount = (int)Math.Round(r.Fine);
+            if (amount <= 0 || GTA.Game.Player.Money < amount) return false;
+            GTA.Game.Player.Money -= amount;
+            r.Paid = true;
+            main.Saves.Data.AddTransaction("Fine", TrafficRules.NameFromString(r.Type) + " (" + r.Location + ")", -amount);
+            main.Saves.Data.Driving.FinesPaid += amount;
+            return true;
         }
 
         private void TrackRepeated(bool moving, int now)
@@ -401,14 +494,14 @@ namespace RealisticLifeSimulator.Game
             if (recentMoving.Count >= 3)
             {
                 recentMoving.Clear();
-                Report(ViolationType.Reckless, 0, L.S("Repeated violations within 90 seconds", "Несколько нарушений за 90 секунд"), now, 120000);
+                Report(ViolationType.Reckless, 0, L.S("Repeated violations within 90 seconds", "Несколько нарушений за 90 секунд"), now, 120000, false);
             }
         }
 
         public int LastMovingViolationTick { get; private set; }
 
         // Shared by traffic, police stops and accidents: one place that records a violation,
-        // updates statistics, licence points and reputation.
+        // updates statistics, licence points, licence status and reputation.
         public ViolationRecord AddViolation(ViolationType type, string details, double fine, bool witnessed,
                                             int points, bool warning, string location)
         {
@@ -431,9 +524,12 @@ namespace RealisticLifeSimulator.Game
             if (warning) { data.Driving.Warnings++; prof.Warnings++; }
 
             double play = data.Stats.TotalPlayTimeSeconds;
+            LicenceStatus before = LicenceRules.Status(prof, play);
             prof.AddPoints(points, TrafficRules.Name(type), play);
+            LicenceRules.Update(prof, play);
             if (fine > 0 || warning) prof.Reputation = PoliceRules.ReputationAfter(prof.Reputation, points, warning);
             prof.CleanKm = 0;
+            main.AnnounceLicenceChange(before, prof);
             return r;
         }
 
@@ -498,5 +594,6 @@ namespace RealisticLifeSimulator.Game
                 if (onFoot == null) onFoot = cop;
             }
             return onFoot;
-        }    }
+        }
+    }
 }

@@ -14,7 +14,7 @@ namespace RealisticLifeSimulator.Game
 {
     public class RlsMain : Script
     {
-        public const string Version = "0.5.1-passenger";
+        public const string Version = "1.0.0";
         private const int MaxModuleFailures = 5;
 
         private sealed class ModuleSlot
@@ -46,6 +46,8 @@ namespace RealisticLifeSimulator.Game
         public PassengerSystem Passenger;
         public TaxiService Taxi;
         public RideMenus RideMenus;
+        public SpeedLimiter Limiter;
+        public PolicePatrolSystem Patrols;
         public LifeHubMenus Menus { get { return menus; } }
         private readonly Random rng = new Random();
 
@@ -122,6 +124,8 @@ namespace RealisticLifeSimulator.Game
             Passenger = new PassengerSystem(this);
             Taxi = new TaxiService(this);
             RideMenus = new RideMenus(this);
+            Limiter = new SpeedLimiter(this);
+            Patrols = new PolicePatrolSystem(this);
             AddModule(new PlaytimeModule(Saves));
             AddModule(new AutosaveModule(Saves, Config));
             AddModule(Hubs);
@@ -136,7 +140,11 @@ namespace RealisticLifeSimulator.Game
             AddModule(Properties);
             AddModule(Passenger);
             AddModule(Taxi);
+            AddModule(Limiter);
+            AddModule(Patrols);
+            AddModule(new LicenceWatchModule(this));
             frameModules.Add(Hubs);
+            frameModules.Add(Limiter);
             frameModules.Add(Fuel);
             frameModules.Add(Police);
             frameModules.Add(Accidents);
@@ -152,6 +160,7 @@ namespace RealisticLifeSimulator.Game
             actionHandlers[RlsAction.OpenVehicleMenu] = () => menus.OpenDirect(menus.BuildMyVehicles());
             actionHandlers[RlsAction.PassengerMenu] = OpenRideMenu;
             actionHandlers[RlsAction.CallTaxi] = () => Taxi.Request();
+            actionHandlers[RlsAction.ToggleSpeedLimiter] = () => Limiter.Toggle();
 
             foreach (ModuleSlot s in modules) Run(s, s.Module.Start, "Start");
 
@@ -205,6 +214,14 @@ namespace RealisticLifeSimulator.Game
                            "Новое: просите водителей NPC подвезти или вызывайте такси. Центр управления > Поездки и такси. Клавиши не назначены."));
                 Saves.Data.PassengerNoticeShown = true;
             }
+            if (firstRun) Saves.Data.V060NoticeShown = true;
+            if (!Saves.Data.V060NoticeShown)
+            {
+                Notify(L.S("Updated to 1.0: automatic traffic fines, more police patrols, pedestrian accidents, speed limiter, usable property interiors, fixed licence checks. See the Life Hub.",
+                           "Обновление 1.0: автоматические штрафы, больше патрулей, ДТП с пешеходами, ограничитель скорости, рабочие интерьеры, исправлена проверка прав. Подробнее в центре управления."));
+                Saves.Data.V060NoticeShown = true;
+            }
+            // Licence status (e.g. 24+ points -> revoked) is applied by LicenceWatchModule on its first update.
             Saves.Save();
             Log.Info("Game-side start complete. Modules: " + modules.Count);
         }
@@ -287,6 +304,7 @@ namespace RealisticLifeSimulator.Game
         private void OnKeyDown(object sender, System.Windows.Forms.KeyEventArgs e)
         {
             if (startupFailed || !gameStarted || shutDown) return;
+            if (SpeedLimiter.TextInputActive) return; // typing into GTA's on-screen keyboard
 
             Keys key = e.KeyCode;
             if (Menu.IsOpen)
@@ -365,9 +383,34 @@ namespace RealisticLifeSimulator.Game
         }
 
         // One compact feed post. Used sparingly for things the player must know.
+        // The same text within 4 seconds is posted only once (no notification spam).
+        private string lastNotice = "";
+        private int lastNoticeAt;
+
         public void Notify(string message)
         {
+            int now = Environment.TickCount;
+            if (message == lastNotice && unchecked(now - lastNoticeAt) < 4000) return;
+            lastNotice = message;
+            lastNoticeAt = now;
             GTA.UI.Notification.Show("~b~Life Sim:~s~ " + message);
+        }
+
+        // Tells the player when their licence status changed (one place for every system).
+        public void AnnounceLicenceChange(LicenceStatus before, DriverProfile p)
+        {
+            double play = Saves.Data.Stats.TotalPlayTimeSeconds;
+            LicenceStatus now = LicenceRules.Status(p, play);
+            if (now == before) return;
+            Log.Info("Licence status " + before + " -> " + now + " (" + (p.StatusReason ?? "") + ")");
+            if (now == LicenceStatus.Revoked)
+                Notify(L.F("~r~Driving licence REVOKED.~s~ {0}~n~Reinstatement: Life Hub > Police & legal status.",
+                           "~r~Права ОТОЗВАНЫ.~s~ {0}~n~Восстановление: центр управления > Полиция и правовой статус.", p.StatusReason ?? ""));
+            else if (now == LicenceStatus.Suspended)
+                Notify(L.S("~o~Driving licence SUSPENDED.~s~ Do not drive until it is valid again.",
+                           "~o~Права ПРИОСТАНОВЛЕНЫ.~s~ Не садитесь за руль, пока они снова не станут действительными."));
+            else
+                Notify(L.S("~g~Your driving licence is valid again.~s~", "~g~Ваши права снова действительны.~s~"));
         }
 
         // ------------------------------------------------------------ shutdown

@@ -8,14 +8,48 @@ using System.Text;
 namespace RealisticLifeSimulator.Core
 {
     // Append new values at the end only: names are stored in save files.
-public enum ViolationType { Speeding, RedLight, StopSign, WrongWay, NoHeadlights, Reckless,
+    public enum ViolationType { Speeding, RedLight, StopSign, WrongWay, NoHeadlights, Reckless,
         LeavingScene, CausingCollision, NoDocuments, SuspendedLicence, EvadingPolice, FalseStatement,
-        FailureToYieldEmergency }
+        FailureToYieldEmergency,
+        HitPedestrian, DrivingWhileRevoked }   // 0.6.0
 
     public enum RoadCategory { Freeway, Highway, Rural, City, Residential, Custom }
 
+    // Base fine amounts in dollars (Settings.ini [FineAmounts]). Multiplied by FineMultiplier.
+    public sealed class FineTable
+    {
+        public int SpeedingMinor = 150;     // up to 20 km/h over
+        public int SpeedingMajor = 300;     // 21-40 km/h over
+        public int SpeedingExtreme = 600;   // more than 40 km/h over
+        public int RedLight = 250;
+        public int StopSign = 150;
+        public int WrongWay = 400;
+        public int NoHeadlights = 80;
+        public int Reckless = 1000;
+        public int FailureToYield = 350;
+        public int LeavingScene = 750;
+        public int HitPedestrian = 800;
+        public int NoDocuments = 200;
+        public int UnlicensedDriving = 1000; // suspended or revoked licence
+        public int EvadingPolice = 1500;
+        public int FalseStatement = 250;
+
+        public static readonly int[] Choices = { 0, 50, 80, 100, 150, 200, 250, 300, 400, 500, 600, 750, 800, 1000, 1500, 2000, 3000, 5000 };
+
+        public FineTable Clone() { return (FineTable)MemberwiseClone(); }
+    }
+
     public static class TrafficRules
     {
+        private static FineTable fines = new FineTable();
+
+        // The table used by BaseFine. Set from the settings when they load or change.
+        public static FineTable Fines
+        {
+            get { return fines; }
+            set { fines = value ?? new FineTable(); }
+        }
+
         // Vehicle node property flags returned by GET_VEHICLE_NODE_PROPERTIES.
         public const int NodeOffRoad = 1;
         public const int NodeSwitchedOff = 8;
@@ -27,24 +61,27 @@ public enum ViolationType { Speeding, RedLight, StopSign, WrongWay, NoHeadlights
 
         public static double BaseFine(ViolationType t, int overKmh)
         {
+            FineTable f = fines;
             switch (t)
             {
                 case ViolationType.Speeding:
-                    if (overKmh > 40) return 600;
-                    if (overKmh > 20) return 300;
-                    return 150;
-                case ViolationType.RedLight: return 250;
-                case ViolationType.StopSign: return 150;
-                case ViolationType.WrongWay: return 400;
-                case ViolationType.NoHeadlights: return 80;
-                case ViolationType.Reckless: return 1000;
-                case ViolationType.LeavingScene: return 750;
-                case ViolationType.CausingCollision: return 600;
-                case ViolationType.NoDocuments: return 200;
-                case ViolationType.SuspendedLicence: return 1000;
-                case ViolationType.EvadingPolice: return 1500;
-                case ViolationType.FalseStatement: return 250;
-                case ViolationType.FailureToYieldEmergency: return 350;
+                    if (overKmh > 40) return f.SpeedingExtreme;
+                    if (overKmh > 20) return f.SpeedingMajor;
+                    return f.SpeedingMinor;
+                case ViolationType.RedLight: return f.RedLight;
+                case ViolationType.StopSign: return f.StopSign;
+                case ViolationType.WrongWay: return f.WrongWay;
+                case ViolationType.NoHeadlights: return f.NoHeadlights;
+                case ViolationType.Reckless: return f.Reckless;
+                case ViolationType.LeavingScene: return f.LeavingScene;
+                case ViolationType.CausingCollision: return 600;   // accidents use PoliceRules.CollisionFine
+                case ViolationType.NoDocuments: return f.NoDocuments;
+                case ViolationType.SuspendedLicence: return f.UnlicensedDriving;
+                case ViolationType.DrivingWhileRevoked: return f.UnlicensedDriving;
+                case ViolationType.EvadingPolice: return f.EvadingPolice;
+                case ViolationType.FalseStatement: return f.FalseStatement;
+                case ViolationType.FailureToYieldEmergency: return f.FailureToYield;
+                case ViolationType.HitPedestrian: return f.HitPedestrian;
             }
             return 100;
         }
@@ -66,6 +103,8 @@ public enum ViolationType { Speeding, RedLight, StopSign, WrongWay, NoHeadlights
                 case ViolationType.EvadingPolice: return L.S("Evading the police", "Уклонение от остановки полицией");
                 case ViolationType.FalseStatement: return L.S("False statement to police", "Ложные показания полиции");
                 case ViolationType.FailureToYieldEmergency: return L.S("Failure to yield to an emergency vehicle", "Не уступил дорогу спецтранспорту");
+                case ViolationType.HitPedestrian: return L.S("Striking a pedestrian", "Наезд на пешехода");
+                case ViolationType.DrivingWhileRevoked: return L.S("Driving with a revoked licence", "Езда без права управления (права отозваны)");
             }
             return t.ToString();
         }

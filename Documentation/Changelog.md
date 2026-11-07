@@ -4,6 +4,51 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/). "Tests" lists the core unit-test count at each version. In-game status is described in the [README](../README.md#14-testing-status).
 
+## [1.0.0] - 2026-11-07 - First stable release
+
+The first public stable version. It contains everything from 0.6.0 below, which was never published on its own.
+
+### Changed
+- Version number is now 1.0.0 (Life Hub, log and save files). The one-time update notice now says "Updated to 1.0".
+- README testing status updated: the author played the release in GTA V story mode before publishing it.
+
+### Tests
+- 57 / 57.
+
+## [0.6.0] - 2026-11-06 - Enforcement, police, pedestrian accidents, interiors, speed limiter
+
+### Fixed
+- **Traffic fines were almost never issued.** The default mode *Witnessed* fined only violations a police officer saw, so the 0.5 logs show nearly every violation as "fine 0". New default mode **Automatic** (`EnforcementRules`): a witnessing officer still pulls you over; without a witness, reliable detections are fined automatically ("traffic camera"); uncertain detections are recorded only. Existing `Settings.ini` files with the old default `FineMode=Witnessed` are moved to `Automatic` once (`SettingsVersion=2`); any explicit later choice is kept.
+- **Driver's licence logic.** A suspended licence was shown as "ЛИШЁН" (revoked) in the Russian Life Hub, and in accident investigations the officer accepted any licence ("Licence N, name"). There is now one source of truth, `LicenceRules.Status()`: *Valid*, *Suspended* or *Revoked*, used by the Life Hub, police stops, accident investigations and patrol checks. The officer always states the real status; a revoked or suspended licence is never reported as valid. The status is also checked in the police database if the licence is not handed over.
+- **Dispatch "no road node found"** (seen many times in the 0.5 logs) for police, ambulances and taxis: `Dispatch.FindSpawnNode` probed only the 30th-220th closest road nodes, which in the dense city are all closer than 200 m and in the countryside all further than 500 m. It now snaps points on rings around the target to the nearest road (16 probes at most), with the old search as a last resort.
+- **Property interiors failed to load** ("Interior not available", seen for Integrity Way and the Sandy Shores garage). The interior is now pinned and must be ready, the scene and collision are streamed while the player is frozen, and only then is the result checked. A similar interior is used as a fallback (HighApt → MidApt → LowApt; garages likewise); if none loads the player stays outside. Leaving puts the player on the ground at the door.
+- **Pedestrian collisions were mostly missed**: the impact check needs a sudden change of velocity or body damage, which hitting a person rarely produces. A separate light check (people within 7 m, every 300 ms while driving) now detects them.
+- Speeding 50+ km/h over the limit produced **two fines** (speeding and reckless driving) for one act; it is now one speeding violation (highest tier) marked "excessive speed".
+- **Stop / give-way false positives** on through roads (0.5 log: "lowest speed 100 km/h"): ignored above 65 km/h, and never fined by camera by default.
+- Speeding right after leaving a freeway was fined against the new, lower limit at once; there is now a 5 s grace period.
+- The *Receipts* page showed most categories (Property, Medical, Rent, Insurance…) in English only.
+- The *Traffic & fines* page and settings still described Phase 3 as "coming".
+- The accident menu said repairs "arrive with a later phase" although repair shops exist.
+- Identical notifications within 4 s are now posted once.
+
+### Added
+- **Automatic traffic enforcement**: per-violation camera switches (`[Enforcement]`), optional immediate payment from cash, duplicate protection by type, 80 m area and time (`ViolationDeduper`), one fine per speeding episode (`SpeedingMonitor`), red-light camera fines only with two or more waiting cars, wrong-way fines only when road geometry and oncoming traffic agree. Every fine notification states the violation, details, amount, points, who issued it and where to pay.
+- **Configurable fine amounts** (`[FineAmounts]`, Life Hub > Traffic & fines > Enforcement and fine amounts), multiplied by `FineMultiplier`.
+- **Police patrols** (`PolicePatrolSystem`): cruising patrols, slow neighbourhood patrols, roadside speed checks and two-officer foot patrols; city police or county sheriffs by area. Density Off / Low / Normal / High (`[Police] PatrolDensity`), at most 1-4 extra units (2 on the Low profile), one new unit per 15 s at most, always created 200-500 m away out of sight; GTA's own police within 300 m are counted. Patrols witness violations, can be handed a traffic stop or an NPC stop, are sent to accidents first, and check the licence of drivers they follow (`LicenceChecks`).
+- **Pedestrian accidents**: struck pedestrians stay at the scene; a witness calls 911 if you don't; one ambulance per scene; paramedics follow the patient, kneel and treat (non-graphic medic scenarios) and take them to hospital; police for moderate and severe cases; ambulance cancelled if the person leaves; gives up after 3 min if the scene can't be reached. New violation *Striking a pedestrian* (fine by severity, 6 points), licence suspended (severe) or revoked (fatal), hit-and-run revokes the licence (and a fatal one gives a wanted level).
+- **Licence status**: timed police suspensions, revocation at 24 points, after driving while suspended twice or after a serious pedestrian collision; *Apply for reinstatement* ($1,500, after 3 h of play, no unpaid fines; clears points). New violation *Driving with a revoked licence*. A reminder when you start driving without a valid licence; a notification whenever the status changes (`LicenceWatchModule`).
+- **Speed limiter** (`SpeedLimiter`): Life Hub > Vehicle controls > Speed limiter: on/off, enter a value with GTA's on-screen keyboard (whole numbers 10-300 km/h, invalid input rejected with a message), ±5 km/h, works while driving and with any vehicle you drive except aircraft and trains; the cap is removed from a vehicle when you leave it. Optional unassigned key *Speed limiter on / off*.
+- **Shorter red-light waits** (`TrafficLightAssist`): if you are first in line at a red light with cross traffic flowing for `MaxRedWaitSeconds` (20 s), your axis gets `AssistGreenSeconds` (10 s) of green plus 3 s amber, the cross axis is set to red and approaching cross traffic is held. GTA's own cycle is not changed; no red-light violation is recorded during the assisted phase.
+- **Usable property interiors**: entry checks ownership, rental and wanted level; inside: leave, sleep 8 h, nap 1 h, shower, watch TV, save, garage (take a car out to the entrance). The property you are in is saved, so the exit works after loading a game inside.
+- **Life Hub**: *Traffic & fines* (was Driving record), *Police & legal status* (was Licence and documents; status, reason and time left, reinstatement, points, fines, wanted level, record), new *Vehicle controls* with *Speed limiter*, *Properties* (was Real estate). Settings: fine modes, automatic enforcement, fine amounts, traffic lights, patrol density, patrol licence checks, pedestrian accidents. Status page: patrol count and red-light assists.
+- Settings `[Enforcement]`, `[FineAmounts]`, `[TrafficLights]`, `[SpeedLimiter]`, `[Police] PatrolDensity, LicenceChecks`, `[Accidents] PedestrianAccidents`, `[General] SettingsVersion`.
+- Save format 7 (licence status fields, property the player is in), upgraded automatically from 6.
+
+### Tests
+- 57 / 57 (17 new: enforcement decisions, speeding episodes, duplicates, false-positive guards, fine amounts, settings upgrade, settings round trip, licence status, escalation and reinstatement, officer lines EN/RU, save migration 6→7 with licence persistence, stable violation names, speed limiter input and units, patrol budgets, traffic-light rules, pedestrian fines, limiter key). Two existing tests were updated for intended changes (default fine mode Automatic; schema after migration is now 7).
+- Real 0.5.1 settings, key bindings and save upgraded on copies without data loss.
+- **Not yet run in the game.**
+
 ## [0.5.1] - 2026-11-06 - Passenger rides and taxi service
 
 ### Added

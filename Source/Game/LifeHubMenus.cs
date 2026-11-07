@@ -38,29 +38,35 @@ namespace RealisticLifeSimulator.Game
         private Menu BuildMain()
         {
             Menu m = new Menu(L.S("Life Hub", "Центр управления"), "Realistic Life Simulator " + RlsMain.Version);
-            m.Add(new MenuItem(L.S("Driving record", "Водительская история"), () => Menu.Push(BuildDrivingRecord()))
+            m.Add(new MenuItem(L.S("Traffic & fines", "Штрафы и ПДД"), () => Menu.Push(BuildDrivingRecord()))
                 .WithValue(() =>
                 {
                     double owed = Data.OutstandingFines();
                     return owed > 0 ? L.Money(owed) + "  >" : More();
                 })
-                .WithDescription(L.S("Traffic violations, fines to pay and driving statistics.",
-                                     "Нарушения ПДД, неоплаченные штрафы и статистика вождения.")));
+                .WithDescription(L.S("Traffic violations, fines to pay, how enforcement works and driving statistics.",
+                                     "Нарушения ПДД, неоплаченные штрафы, как работает контроль и статистика вождения.")));
+            m.Add(new MenuItem(L.S("Police & legal status", "Полиция и правовой статус"), () => Menu.Push(BuildLicence()))
+                .WithValue(() =>
+                {
+                    LicenceStatus st = LicenceRules.Status(main.CurrentProfile(), Data.Stats.TotalPlayTimeSeconds);
+                    if (st == LicenceStatus.Revoked) return L.S("REVOKED  >", "ОТОЗВАНЫ  >");
+                    if (st == LicenceStatus.Suspended) return L.S("SUSPENDED  >", "ПРИОСТАНОВЛЕНЫ  >");
+                    return More();
+                })
+                .WithDescription(L.S("Driving licence status, points, reinstatement, insurance and your record with the police.",
+                                     "Статус прав, баллы, восстановление, страховка и ваша история с полицией.")));
+            m.Add(new MenuItem(L.S("Vehicle controls", "Управление машиной"), () => Menu.Push(BuildVehicleControls()))
+                .WithValue(() => main.Limiter != null && main.Limiter.Enabled
+                    ? L.F("limiter {0}  >", "огранич. {0}  >", main.Config.Settings.SpeedLimiterKmh) : More())
+                .WithDescription(L.S("Speed limiter for the vehicle you drive.", "Ограничитель скорости для машины, которой вы управляете.")));
             m.Add(new MenuItem(L.S("My vehicles", "Мои машины"), () => Menu.Push(BuildMyVehicles()))
                 .WithValue(() => main.Ownership == null ? More() : main.Ownership.Mine().Count + "  >")
                 .WithDescription(L.S("Owned cars: condition, mileage, insurance, service history, recovery.",
                                      "Ваши машины: состояние, пробег, страховка, история обслуживания, эвакуация.")));
-            m.Add(new MenuItem(L.S("Real estate", "Недвижимость"), () => Menu.Push(BuildRealEstate())).WithValue(More)
+            m.Add(new MenuItem(L.S("Properties", "Недвижимость"), () => Menu.Push(BuildRealEstate())).WithValue(More)
                 .WithDescription(L.S("Homes, apartments and garages: your properties and listings for sale.",
                                      "Дома, квартиры и гаражи: ваша недвижимость и объекты на продажу.")));
-            m.Add(new MenuItem(L.S("Licence and documents", "Права и документы"), () => Menu.Push(BuildLicence()))
-                .WithValue(() =>
-                {
-                    DriverProfile p = main.CurrentProfile();
-                    return p.IsSuspended(Data.Stats.TotalPlayTimeSeconds) ? L.S("SUSPENDED  >", "ЛИШЁН  >") : More();
-                })
-                .WithDescription(L.S("Driving licence, points, insurance and driver reputation for the current character.",
-                                     "Права, баллы, страховка и репутация водителя текущего персонажа.")));
             m.Add(new MenuItem(L.S("Accident reports", "Протоколы ДТП"), () => Menu.Push(BuildAccidents()))
                 .WithValue(() => Data.Accidents.Count > 0 ? Data.Accidents.Count + "  >" : More()));
             m.Add(new MenuItem(L.S("City incidents", "Происшествия в городе"), () => Menu.Push(BuildIncidents()))
@@ -102,14 +108,15 @@ namespace RealisticLifeSimulator.Game
 
         private Menu BuildDrivingRecord()
         {
-            Menu m = new Menu(L.S("Driving record", "Водительская история"),
-                L.S("Fines are issued when police see a violation", "Штраф выписывается, если нарушение видела полиция"));
+            Menu m = new Menu(L.S("Traffic & fines", "Штрафы и ПДД"), L.S("Mode: ", "Режим: ") + FineModeName(Settings.Fines));
             m.Add(new MenuItem(L.S("Outstanding fines", "Неоплаченные штрафы"), null).WithValue(() => L.Money(Data.OutstandingFines())));
             m.Add(new MenuItem(L.S("Pay outstanding fines", "Оплатить штрафы"), PayFines)
                 .WithEnabled(() => Data.OutstandingFines() > 0)
                 .WithValue(() => L.F("cash {0}", "наличные {0}", L.Money(GTA.Game.Player.Money)))
-                .WithDescription(L.S("Paid from cash, oldest fines first. Unpaid fines will matter during police stops (Phase 3).",
-                                     "Оплата наличными, начиная со старых. Неоплаченные штрафы будут учитываться при остановках полицией (этап 3).")));
+                .WithDescription(L.S("Paid from cash, oldest fines first. Unpaid fines make officers less lenient and block licence reinstatement.",
+                                     "Оплата наличными, начиная со старых. Неоплаченные штрафы делают полицию строже и мешают восстановить права.")));
+            m.Add(new MenuItem(L.S("Enforcement and fine amounts", "Контроль и размер штрафов"), () => Menu.Push(BuildTrafficSettings())).WithValue(More)
+                .WithDescription(FineModeHelp(Settings.Fines)));
             m.Add(new MenuItem(L.S("Distance driven", "Пройдено"), null)
                 .WithValue(() => Data.Driving.DistanceKm.ToString("0.0", L.Culture) + L.S(" km", " км")));
             m.Add(new MenuItem(L.S("Violations recorded", "Записано нарушений"), null).WithValue(() => Data.Driving.Violations.ToString()));
@@ -124,10 +131,12 @@ namespace RealisticLifeSimulator.Game
                 ViolationRecord v = list[i];
                 DateTime t;
                 string when = DateTime.TryParse(v.TimeUtc, null, System.Globalization.DateTimeStyles.RoundtripKind, out t) ? L.DateTimeLocal(t) : "";
-                string status = v.Fine <= 0 ? L.S("recorded", "запись")
+                string status = v.Warning ? L.S("warning", "предупреждение")
+                              : v.Fine <= 0 ? L.S("recorded", "запись")
                               : v.Paid ? L.F("{0} paid", "{0} оплачен", L.Money(v.Fine))
                               : L.F("{0} unpaid", "{0} не оплачен", L.Money(v.Fine));
-                string desc = when + "  " + v.Location + (string.IsNullOrEmpty(v.Details) ? "" : "  -  " + v.Details);
+                string source = v.Fine > 0 ? "  (" + EnforcementRules.SourceName(v.Witnessed) + (v.Points > 0 ? L.F(", {0} pt", ", {0} б.", v.Points) : "") + ")" : "";
+                string desc = when + "  " + v.Location + (string.IsNullOrEmpty(v.Details) ? "" : "  -  " + v.Details) + source;
                 m.Add(new MenuItem(TrafficRules.NameFromString(v.Type), null).WithValue(() => status).WithDescription(desc));
             }
             if (shown == 0) m.Add(new MenuItem(L.S("No violations - well driven.", "Нарушений нет - отличное вождение."), null));
@@ -283,7 +292,7 @@ namespace RealisticLifeSimulator.Game
         public Menu BuildRealEstate()
         {
             PropertySystem ps = main.Properties;
-            Menu m = new Menu(L.S("Real estate", "Недвижимость"), L.S("Your properties first, then listings", "Сначала ваши объекты, затем предложения"));
+            Menu m = new Menu(L.S("Properties", "Недвижимость"), L.S("Your properties first, then listings", "Сначала ваши объекты, затем предложения"));
             m.Add(new MenuItem(L.S("Unpaid bills", "Неоплаченные счета"), null).WithValue(() => L.Money(Data.Debt))
                 .WithDescription(L.F("Bills every {0} minutes of play: maintenance and insurance out, rent in.",
                                      "Счета каждые {0} минут игры: содержание и страховка списываются, аренда начисляется.", Settings.BillingIntervalMinutes)));
@@ -303,8 +312,11 @@ namespace RealisticLifeSimulator.Game
                 PropertyDef def = d;
                 OwnedProperty op = ps.Owned(d.Id);
                 m.Add(new MenuItem(d.Name, () => { ps.SetWaypoint(def); })
-                    .WithValue(() => (op.RentedOut ? L.S("rented out", "сдан") : L.S("owned", "ваш")) + (def.GarageSlots > 0 ? "  " + ps.StoredCount(def.Id) + "/" + def.GarageSlots : ""))
-                    .WithDescription(L.S("Click to set a waypoint. Manage it at its door.", "Нажмите, чтобы отметить на карте. Управление - у двери объекта.")));
+                    .WithValue(() => (ps.Inside == def ? L.S("you are here", "вы здесь") : op.RentedOut ? L.S("rented out", "сдан") : L.S("owned", "ваш"))
+                                     + (def.GarageSlots > 0 ? "  " + ps.StoredCount(def.Id) + "/" + def.GarageSlots : ""))
+                    .WithDescription(PropertySystem.HasInterior(def)
+                        ? L.S("Click to set a waypoint. At the door marker: enter, garage, rent out, sell.", "Нажмите, чтобы отметить на карте. У маркера двери: войти, гараж, аренда, продажа.")
+                        : L.S("Click to set a waypoint. Manage it at its door.", "Нажмите, чтобы отметить на карте. Управление - у двери объекта.")));
             }
             foreach (PropertyDef d in ps.Defs)
             {
@@ -332,20 +344,122 @@ namespace RealisticLifeSimulator.Game
         private Menu BuildLicence()
         {
             DriverProfile p = main.CurrentProfile();
-            Menu m = new Menu(L.S("Licence and documents", "Права и документы"), p.Character);
+            Menu m = new Menu(L.S("Police & legal status", "Полиция и правовой статус"), p.Character);
+            m.Add(new MenuItem(L.S("Licence status", "Статус прав"), null)
+                .WithValue(() => LicenceRules.StatusName(LicenceRules.Status(p, Data.Stats.TotalPlayTimeSeconds)))
+                .WithDescription(L.F("Suspended at {0} active points (ends when points expire, after 2 h of play). Revoked at {1} points, after driving while suspended twice, or after a serious pedestrian collision.",
+                                     "Приостанавливаются при {0} баллах (до сгорания баллов, 2 ч игры). Отзываются при {1} баллах, после повторной езды с приостановленными правами или после тяжёлого наезда на пешехода.",
+                                     PoliceRules.SuspensionPoints, LicenceRules.RevokePoints)));
+            m.Add(new MenuItem(L.S("Reason / time left", "Причина / осталось"), null).WithValue(() =>
+            {
+                double play = Data.Stats.TotalPlayTimeSeconds;
+                LicenceStatus st = LicenceRules.Status(p, play);
+                if (st == LicenceStatus.Valid) return "-";
+                int min = (int)Math.Ceiling(LicenceRules.SecondsRemaining(p, play) / 60.0);
+                return min > 0 ? L.F("{0} min of play", "{0} мин игры", min) : L.S("can apply now", "можно подать заявление");
+            }).WithDescription(string.IsNullOrEmpty(p.StatusReason) ? "" : p.StatusReason));
+            m.Add(new MenuItem(L.F("Apply for reinstatement ({0})", "Восстановить права ({0})", L.Money(LicenceRules.ReinstatementFee)), () =>
+            {
+                double play = Data.Stats.TotalPlayTimeSeconds;
+                string reason;
+                if (!LicenceRules.CanReinstate(p, play, Data.OutstandingFines(), GTA.Game.Player.Money, out reason))
+                {
+                    main.Notify(reason);
+                    return;
+                }
+                LicenceStatus before = LicenceRules.Status(p, play);
+                GTA.Game.Player.Money -= (int)LicenceRules.ReinstatementFee;
+                Data.AddTransaction("Licence", L.S("Licence reinstatement fee", "Пошлина за восстановление прав"), -LicenceRules.ReinstatementFee);
+                LicenceRules.Reinstate(p, play);
+                main.AnnounceLicenceChange(before, p);
+                main.Saves.Save();
+                Menu.Replace(BuildLicence());
+            }).WithEnabled(() => LicenceRules.Status(p, Data.Stats.TotalPlayTimeSeconds) == LicenceStatus.Revoked)
+              .WithDescription(L.S("Possible after the waiting period, with all fines paid. Clears your points.",
+                                   "Возможно после окончания срока лишения и оплаты всех штрафов. Баллы обнуляются.")));
             m.Add(new MenuItem(L.S("Licence number", "Номер прав"), null).WithValue(() => p.LicenceNumber));
-            m.Add(new MenuItem(L.S("Status", "Статус"), null).WithValue(() => p.IsSuspended(Data.Stats.TotalPlayTimeSeconds)
-                ? L.S("Suspended", "Приостановлены") : L.S("Valid", "Действительны"))
-                .WithDescription(L.F("A licence is suspended at {0} active points. Points expire after 2 hours of play.",
-                                     "Права приостанавливаются при {0} активных баллах. Баллы сгорают через 2 часа игры.", PoliceRules.SuspensionPoints)));
             m.Add(new MenuItem(L.S("Active points", "Активные баллы"), null).WithValue(() =>
                 p.ActivePoints(Data.Stats.TotalPlayTimeSeconds) + " / " + PoliceRules.SuspensionPoints));
+            m.Add(new MenuItem(L.S("Outstanding fines", "Неоплаченные штрафы"), null).WithValue(() => L.Money(Data.OutstandingFines())));
+            m.Add(new MenuItem(L.S("Wanted level", "Уровень розыска"), null).WithValue(() => N.Wanted() > 0 ? N.Wanted() + " / 5" : L.S("none", "нет")));
             m.Add(new MenuItem(L.S("Driver reputation", "Репутация водителя"), null).WithValue(() => ((int)p.Reputation) + " / 100")
                 .WithDescription(L.S("Higher reputation makes officers more likely to give a warning. Clean driving slowly restores it.",
                                      "Чем выше репутация, тем чаще полиция ограничивается предупреждением. Аккуратная езда её постепенно восстанавливает.")));
             m.Add(new MenuItem(L.S("Insurance", "Страховка"), null).WithValue(() => p.Insurer).WithDescription(L.S("Policy ", "Полис ") + p.PolicyNumber));
             m.Add(new MenuItem(L.S("Traffic stops", "Остановок полицией"), null).WithValue(() => p.Stops.ToString()));
             m.Add(new MenuItem(L.S("Warnings received", "Предупреждений"), null).WithValue(() => p.Warnings.ToString()));
+            m.Add(new MenuItem(L.S("Suspensions / revocations", "Приостановок / лишений"), null).WithValue(() => p.Suspensions + " / " + p.Revocations));
+            m.Add(new MenuItem(L.S("Back", "Назад"), () => Menu.Back()));
+            return m;
+        }
+
+        // ------------------------------------------------------------ vehicle controls (0.6.0)
+
+        private Menu BuildVehicleControls()
+        {
+            Menu m = new Menu(L.S("Vehicle controls", "Управление машиной"), CurrentVehicleText());
+            m.Add(new MenuItem(L.S("Speed limiter", "Ограничитель скорости"), () => Menu.Push(BuildSpeedLimiter()))
+                .WithValue(() => main.Limiter.StatusText() + "  >")
+                .WithDescription(L.S("Set a maximum speed for the vehicle you drive.", "Задайте максимальную скорость для машины, которой управляете.")));
+            m.Add(new MenuItem(L.S("My vehicles", "Мои машины"), () => Menu.Push(BuildMyVehicles())).WithValue(More));
+            m.Add(new MenuItem(L.S("Back", "Назад"), () => Menu.Back()));
+            return m;
+        }
+
+        private static string CurrentVehicleText()
+        {
+            GTA.Ped p = GTA.Game.Player.Character;
+            GTA.Vehicle v = p != null && p.Exists() ? p.CurrentVehicle : null;
+            if (v == null || !v.Exists()) return L.S("Not in a vehicle", "Вы не в машине");
+            if (v.Driver != p) return L.S("Passenger", "Пассажир") + ": " + N.VehicleName(v);
+            return N.VehicleName(v);
+        }
+
+        private Menu BuildSpeedLimiter()
+        {
+            SpeedLimiter lim = main.Limiter;
+            Menu m = new Menu(L.S("Speed limiter", "Ограничитель скорости"), CurrentVehicleText());
+            m.Add(new MenuItem(L.S("Limiter", "Ограничитель"), () =>
+            {
+                lim.Toggle();
+                Menu.Replace(BuildSpeedLimiter());
+            }).WithValue(() => L.OnOff(lim.Enabled))
+              .WithDescription(L.S("When on, the vehicle you drive cannot go faster than the set speed. Braking and steering are not affected.",
+                                   "Когда включён, машина не разгоняется выше заданной скорости. Тормоз и руль работают как обычно.")));
+            m.Add(new MenuItem(L.S("Maximum speed", "Максимальная скорость"), null)
+                .WithValue(() => Settings.SpeedLimiterKmh + L.S(" km/h", " км/ч")));
+            m.Add(new MenuItem(L.S("Enter a speed...", "Ввести скорость..."), () =>
+            {
+                SpeedLimiter.TextInputActive = true;
+                string text;
+                try { text = SpeedLimiter.AskNumber(Settings.SpeedLimiterKmh.ToString()); }
+                finally { SpeedLimiter.TextInputActive = false; }
+                if (text == null) return; // cancelled
+                int kmh;
+                string error;
+                if (!SpeedLimiterRules.TryParse(text, out kmh, out error))
+                {
+                    main.Notify(L.S("Speed limiter: ", "Ограничитель: ") + error);
+                    return;
+                }
+                lim.SetLimit(kmh);
+                main.Notify(L.F("Speed limiter set to {0} km/h{1}.", "Ограничитель: {0} км/ч{1}.", kmh,
+                    lim.Enabled ? "" : L.S(" (switch it on to use it)", " (включите, чтобы он работал)")));
+                if (Menu.IsOpen) Menu.Replace(BuildSpeedLimiter());
+            }).WithDescription(L.F("Type a whole number from {0} to {1} km/h and press Enter.", "Введите целое число от {0} до {1} км/ч и нажмите Enter.",
+                SpeedLimiterRules.MinKmh, SpeedLimiterRules.MaxKmh)));
+            m.Add(new MenuItem(L.F("Lower by {0} km/h", "Уменьшить на {0} км/ч", SpeedLimiterRules.StepKmh), () =>
+                lim.SetLimit(Settings.SpeedLimiterKmh - SpeedLimiterRules.StepKmh)).WithEnabled(() => Settings.SpeedLimiterKmh > SpeedLimiterRules.MinKmh));
+            m.Add(new MenuItem(L.F("Raise by {0} km/h", "Увеличить на {0} км/ч", SpeedLimiterRules.StepKmh), () =>
+                lim.SetLimit(Settings.SpeedLimiterKmh + SpeedLimiterRules.StepKmh)).WithEnabled(() => Settings.SpeedLimiterKmh < SpeedLimiterRules.MaxKmh));
+            m.Add(new MenuItem(L.S("Applies to", "Действует на"), null).WithValue(() =>
+            {
+                GTA.Ped p = GTA.Game.Player.Character;
+                GTA.Vehicle v = p.CurrentVehicle;
+                if (v == null || !v.Exists() || v.Driver != p) return L.S("the vehicle you drive", "машину, которой вы управляете");
+                if (!SpeedLimiterRules.Supports((int)v.ClassType)) return L.S("not this vehicle (aircraft / train)", "не эту машину (авиа / поезд)");
+                return lim.ActiveNow ? L.S("this vehicle (active)", "эту машину (работает)") : L.S("this vehicle", "эту машину");
+            }));
             m.Add(new MenuItem(L.S("Back", "Назад"), () => Menu.Back()));
             return m;
         }
@@ -462,13 +576,33 @@ namespace RealisticLifeSimulator.Game
                 Transaction t = list[i];
                 DateTime when;
                 string w = DateTime.TryParse(t.TimeUtc, null, System.Globalization.DateTimeStyles.RoundtripKind, out when) ? L.DateTimeLocal(when) : "";
-                string cat = t.Category == "Fuel" ? L.S("Fuel", "Топливо") : t.Category == "Fine" ? L.S("Fine", "Штраф") : t.Category == "Taxi" ? L.S("Taxi", "Такси") : t.Category;
+                string cat = CategoryName(t.Category);
                 double amount = t.Amount;
                 m.Add(new MenuItem(cat + "  " + w, null).WithValue(() => L.Money(amount)).WithDescription(t.Description));
             }
             if (shown == 0) m.Add(new MenuItem(L.S("No receipts yet.", "Чеков пока нет."), null));
             m.Add(new MenuItem(L.S("Back", "Назад"), () => Menu.Back()));
             return m;
+        }
+
+        // 0.6.0 fix: categories other than fuel, fines and taxi were shown in English only.
+        private static string CategoryName(string c)
+        {
+            switch (c)
+            {
+                case "Fuel": return L.S("Fuel", "Топливо");
+                case "Fine": return L.S("Fine", "Штраф");
+                case "Taxi": return L.S("Taxi", "Такси");
+                case "Insurance": return L.S("Insurance", "Страховка");
+                case "Vehicle": return L.S("Vehicle", "Машина");
+                case "Bills": return L.S("Bills", "Счета");
+                case "Licence": return L.S("Licence", "Права");
+                case "Medical": return L.S("Medical", "Медицина");
+                case "Repair": return L.S("Repair", "Ремонт");
+                case "Rent": return L.S("Rent", "Аренда");
+                case "Property": return L.S("Property", "Недвижимость");
+            }
+            return c ?? "";
         }
 
         // ------------------------------------------------------------ settings
@@ -497,7 +631,7 @@ namespace RealisticLifeSimulator.Game
                                    "Низкий сохраняет стабильный FPS на слабых ПК: меньше NPC моделируется подробно.")));
 
             m.Add(new MenuItem(L.S("Fuel", "Топливо"), () => Menu.Push(BuildFuelSettings())).WithValue(More));
-            m.Add(new MenuItem(L.S("Traffic rules", "Правила движения"), () => Menu.Push(BuildTrafficSettings())).WithValue(More));
+            m.Add(new MenuItem(L.S("Traffic & fines", "Штрафы и ПДД"), () => Menu.Push(BuildTrafficSettings())).WithValue(More));
             m.Add(new MenuItem(L.S("Police and accidents", "Полиция и ДТП"), () => Menu.Push(BuildPoliceSettings())).WithValue(More));
             m.Add(new MenuItem(L.S("NPC traffic", "Трафик NPC"), () => Menu.Push(BuildNpcSettings())).WithValue(More));
             m.Add(new MenuItem(L.S("Property and vehicles", "Недвижимость и машины"), () => Menu.Push(BuildOwnershipSettings())).WithValue(More));
@@ -563,16 +697,22 @@ namespace RealisticLifeSimulator.Game
 
         private Menu BuildTrafficSettings()
         {
-            Menu m = new Menu(L.S("Traffic rules", "Правила движения"), L.S("Detection and fines", "Обнаружение и штрафы"));
+            Menu m = new Menu(L.S("Traffic & fines", "Штрафы и ПДД"), L.S("Detection, enforcement and fines", "Обнаружение, контроль и штрафы"));
             m.Add(new MenuItem(L.S("Traffic laws", "Правила движения"), () => { Settings.TrafficEnabled = !Settings.TrafficEnabled; SaveSettings(); })
                 .WithValue(() => L.OnOff(Settings.TrafficEnabled)));
             m.Add(new MenuItem(L.S("Fines", "Штрафы"), () =>
             {
-                Settings.Fines = (FineMode)(((int)Settings.Fines + 1) % 3);
+                int idx = Array.IndexOf(RlsSettings.FineModeOrder, Settings.Fines);
+                Settings.Fines = RlsSettings.FineModeOrder[(idx + 1) % RlsSettings.FineModeOrder.Length];
                 SaveSettings();
+                Menu.Replace(BuildTrafficSettings());
             }).WithValue(() => FineModeName(Settings.Fines))
-              .WithDescription(L.S("Witnessed: only when police see it. Always: every violation. Off: record only.",
-                                   "При свидетелях: только если видит полиция. Всегда: за каждое нарушение. Выкл: только запись.")));
+              .WithDescription(FineModeHelp(Settings.Fines)));
+            m.Add(new MenuItem(L.S("Automatic enforcement", "Автоматический контроль"), () => Menu.Push(BuildAutoEnforcement())).WithValue(More)
+                .WithDescription(L.S("Which violations cameras and patrol radar fine without an officer stopping you.",
+                                     "Какие нарушения камеры и радары штрафуют без остановки полицией.")));
+            m.Add(new MenuItem(L.S("Fine amounts", "Суммы штрафов"), () => Menu.Push(BuildFineAmounts())).WithValue(More)
+                .WithDescription(L.S("Base amount for each violation, before the multiplier below.", "Базовая сумма за каждое нарушение до множителя ниже.")));
             m.Add(new MenuItem(L.S("Speed tolerance", "Допуск скорости"), () =>
             {
                 Settings.SpeedToleranceKmh = Next(RlsSettings.ToleranceChoices, Settings.SpeedToleranceKmh);
@@ -596,8 +736,106 @@ namespace RealisticLifeSimulator.Game
                 .WithValue(() => L.OnOff(Settings.DetectWrongWay)));
             m.Add(new MenuItem(L.S("Headlights at night", "Фары ночью"), () => { Settings.DetectHeadlights = !Settings.DetectHeadlights; SaveSettings(); })
                 .WithValue(() => L.OnOff(Settings.DetectHeadlights)));
+            m.Add(new MenuItem(L.S("Shorter red lights", "Короче красный свет"), () => { Settings.ShorterRedLights = !Settings.ShorterRedLights; SaveSettings(); })
+                .WithValue(() => L.OnOff(Settings.ShorterRedLights))
+                .WithDescription(L.S("First in line at a red light for too long: your direction gets a short green, cross traffic waits. GTA's own cycle is unchanged.",
+                                     "Если вы первым долго стоите на красный: ваше направление получает короткий зелёный, поперечный поток ждёт. Цикл GTA не меняется.")));
+            m.Add(new MenuItem(L.S("Longest red-light wait", "Максимальное ожидание на красный"), () =>
+            {
+                Settings.MaxRedWaitSeconds = Next(TrafficLightRules.MaxWaitChoices, Settings.MaxRedWaitSeconds);
+                SaveSettings();
+            }).WithValue(() => L.F("{0} s", "{0} с", Settings.MaxRedWaitSeconds)).WithEnabled(() => Settings.ShorterRedLights));
+            m.Add(new MenuItem(L.S("Assisted green phase", "Длительность зелёного"), () =>
+            {
+                Settings.AssistGreenSeconds = Next(TrafficLightRules.GreenChoices, Settings.AssistGreenSeconds);
+                SaveSettings();
+            }).WithValue(() => L.F("{0} s + 3 s amber", "{0} с + 3 с жёлтый", Settings.AssistGreenSeconds)).WithEnabled(() => Settings.ShorterRedLights));
             m.Add(new MenuItem(L.S("Back", "Назад"), () => Menu.Back()));
             return m;
+        }
+
+        private Menu BuildAutoEnforcement()
+        {
+            AutoEnforcement a = Settings.Auto;
+            Menu m = new Menu(L.S("Automatic enforcement", "Автоматический контроль"), L.S("Used in the Automatic fine mode", "Действует в режиме «Автоматически»"));
+            AddToggle(m, L.S("Speeding (camera / radar)", "Превышение (камера / радар)"), () => a.Speeding, v => a.Speeding = v,
+                L.S("Fined after 3 s above the limit plus tolerance; once per episode.", "Штраф после 3 с выше лимита с допуском; один раз за эпизод."));
+            AddToggle(m, L.S("Red light (camera)", "Красный свет (камера)"), () => a.RedLight, v => a.RedLight = v,
+                L.S("Only when two or more cars were waiting at the light. One waiting car is recorded, not fined.",
+                    "Только если на светофоре стояли две и более машины. Одна машина - только запись."));
+            AddToggle(m, L.S("Wrong way", "Встречная полоса"), () => a.WrongWay, v => a.WrongWay = v,
+                L.S("Only when road geometry and oncoming traffic agree for 4 s.", "Только если геометрия дороги и встречный поток совпадают 4 с."));
+            AddToggle(m, L.S("Not yielding to sirens", "Не уступил спецтранспорту"), () => a.FailureToYield, v => a.FailureToYield = v, "");
+            AddToggle(m, L.S("Stop / give way", "Стоп / уступи дорогу"), () => a.StopSign, v => a.StopSign = v,
+                L.S("Off by default: GTA's junction data is too unreliable for camera fines.", "По умолчанию выкл: данные перекрёстков GTA ненадёжны для камер."));
+            AddToggle(m, L.S("Headlights at night", "Фары ночью"), () => a.Headlights, v => a.Headlights = v, "");
+            AddToggle(m, L.S("Pay camera fines from cash", "Оплачивать штрафы сразу наличными"), () => a.AutoPayFromCash, v => a.AutoPayFromCash = v,
+                L.S("Off: fines wait in Traffic & fines until you pay them.", "Выкл: штрафы ждут оплаты в разделе «Штрафы и ПДД»."));
+            m.Add(new MenuItem(L.S("Back", "Назад"), () => Menu.Back()));
+            return m;
+        }
+
+        private void AddToggle(Menu m, string label, Func<bool> get, Action<bool> set, string description)
+        {
+            m.Add(new MenuItem(label, () => { set(!get()); SaveSettings(); }).WithValue(() => L.OnOff(get())).WithDescription(description));
+        }
+
+        private Menu BuildFineAmounts()
+        {
+            FineTable f = Settings.FineAmounts;
+            Menu m = new Menu(L.S("Fine amounts", "Суммы штрафов"), L.F("Multiplier x{0}", "Множитель x{0}", Settings.FineMultiplier.ToString("0.0", L.Culture)));
+            AddAmount(m, ViolationType.Speeding, L.S("Speeding up to 20 km/h", "Превышение до 20 км/ч"), () => f.SpeedingMinor, v => f.SpeedingMinor = v);
+            AddAmount(m, ViolationType.Speeding, L.S("Speeding 21-40 km/h", "Превышение 21-40 км/ч"), () => f.SpeedingMajor, v => f.SpeedingMajor = v);
+            AddAmount(m, ViolationType.Speeding, L.S("Speeding over 40 km/h", "Превышение более 40 км/ч"), () => f.SpeedingExtreme, v => f.SpeedingExtreme = v);
+            AddAmount(m, ViolationType.RedLight, null, () => f.RedLight, v => f.RedLight = v);
+            AddAmount(m, ViolationType.StopSign, null, () => f.StopSign, v => f.StopSign = v);
+            AddAmount(m, ViolationType.WrongWay, null, () => f.WrongWay, v => f.WrongWay = v);
+            AddAmount(m, ViolationType.NoHeadlights, null, () => f.NoHeadlights, v => f.NoHeadlights = v);
+            AddAmount(m, ViolationType.FailureToYieldEmergency, null, () => f.FailureToYield, v => f.FailureToYield = v);
+            AddAmount(m, ViolationType.Reckless, null, () => f.Reckless, v => f.Reckless = v);
+            AddAmount(m, ViolationType.LeavingScene, null, () => f.LeavingScene, v => f.LeavingScene = v);
+            AddAmount(m, ViolationType.HitPedestrian, null, () => f.HitPedestrian, v => f.HitPedestrian = v);
+            AddAmount(m, ViolationType.SuspendedLicence, L.S("Driving without a valid licence", "Езда без действующих прав"), () => f.UnlicensedDriving, v => f.UnlicensedDriving = v);
+            AddAmount(m, ViolationType.NoDocuments, null, () => f.NoDocuments, v => f.NoDocuments = v);
+            AddAmount(m, ViolationType.EvadingPolice, null, () => f.EvadingPolice, v => f.EvadingPolice = v);
+            AddAmount(m, ViolationType.FalseStatement, null, () => f.FalseStatement, v => f.FalseStatement = v);
+            m.Add(new MenuItem(L.S("Reset to defaults", "Сбросить по умолчанию"), () =>
+            {
+                Settings.FineAmounts = new FineTable();
+                TrafficRules.Fines = Settings.FineAmounts;
+                SaveSettings();
+                Menu.Replace(BuildFineAmounts());
+            }));
+            m.Add(new MenuItem(L.S("Back", "Назад"), () => Menu.Back()));
+            return m;
+        }
+
+        private void AddAmount(Menu m, ViolationType t, string label, Func<int> get, Action<int> set)
+        {
+            m.Add(new MenuItem(label ?? TrafficRules.Name(t), () =>
+            {
+                set(NextAmount(get()));
+                SaveSettings();
+            }).WithValue(() => L.Money(get())).WithDescription(L.S("Click to cycle through amounts. Any value can be set in Config\\Settings.ini [FineAmounts].",
+                                                                   "Нажмите, чтобы выбрать сумму. Любое значение можно задать в Config\\Settings.ini [FineAmounts].")));
+        }
+
+        private static int NextAmount(int current)
+        {
+            foreach (int c in FineTable.Choices) if (c > current) return c;
+            return FineTable.Choices[0];
+        }
+
+        private static string FineModeHelp(FineMode f)
+        {
+            switch (f)
+            {
+                case FineMode.Witnessed: return L.S("Fined only when a police officer sees the violation.", "Штраф только если нарушение видел полицейский.");
+                case FineMode.Always: return L.S("Every detected violation is fined, even uncertain detections.", "Штраф за каждое обнаруженное нарушение, даже сомнительное.");
+                case FineMode.Off: return L.S("Violations are recorded, never fined.", "Нарушения только записываются, без штрафов.");
+            }
+            return L.S("Police stop you when they see it; otherwise cameras fine reliable detections (speeding, red lights...). Uncertain ones are only recorded.",
+                       "Полиция останавливает, если видит; иначе камеры штрафуют за надёжно обнаруженные нарушения (скорость, красный...). Сомнительные - только запись.");
         }
 
         private Menu BuildPoliceSettings()
@@ -617,8 +855,23 @@ namespace RealisticLifeSimulator.Game
                 SaveSettings();
             }).WithValue(() => Settings.AccidentMinSpeedKmh + L.S(" km/h", " км/ч"))
               .WithDescription(L.S("Light bumps below this speed are not treated as accidents.", "Лёгкие касания ниже этой скорости не считаются ДТП.")));
-            m.Add(new MenuItem(L.S("Other drivers call 911", "Другие водители звонят в 911"), () => { Settings.NpcCallEmergency = !Settings.NpcCallEmergency; SaveSettings(); })
+            m.Add(new MenuItem(L.S("Other drivers and witnesses call 911", "Водители и свидетели звонят в 911"), () => { Settings.NpcCallEmergency = !Settings.NpcCallEmergency; SaveSettings(); })
                 .WithValue(() => L.OnOff(Settings.NpcCallEmergency)));
+            m.Add(new MenuItem(L.S("Pedestrian accidents", "ДТП с пешеходами"), () => { Settings.PedestrianAccidents = !Settings.PedestrianAccidents; SaveSettings(); })
+                .WithValue(() => L.OnOff(Settings.PedestrianAccidents))
+                .WithDescription(L.S("Hitting a pedestrian opens an accident scene: ambulance, police investigation, fines and licence consequences.",
+                                     "Наезд на пешехода открывает ДТП: скорая, разбирательство полиции, штрафы и последствия для прав.")));
+            m.Add(new MenuItem(L.S("Police patrols", "Полицейские патрули"), () =>
+            {
+                Settings.PolicePatrols = (PoliceDensity)(((int)Settings.PolicePatrols + 1) % 4);
+                SaveSettings();
+            }).WithValue(() => PatrolRules.DensityName(Settings.PolicePatrols))
+              .WithDescription(L.S("Extra patrol cars and officers (1-4 at most, fewer on the Low profile). They appear far away and drive in on the roads.",
+                                   "Дополнительные патрули (не более 1-4, меньше на профиле «Низкий»). Появляются далеко и приезжают по дорогам.")));
+            m.Add(new MenuItem(L.S("Patrol licence checks", "Проверка прав патрулями"), () => { Settings.PatrolLicenceChecks = !Settings.PatrolLicenceChecks; SaveSettings(); })
+                .WithValue(() => L.OnOff(Settings.PatrolLicenceChecks))
+                .WithDescription(L.S("A patrol that sees you driving with a suspended or revoked licence may pull you over.",
+                                     "Патруль, увидевший вас за рулём без действующих прав, может вас остановить.")));
             m.Add(new MenuItem(L.S("Back", "Назад"), () => Menu.Back()));
             return m;
         }
@@ -713,8 +966,9 @@ namespace RealisticLifeSimulator.Game
             {
                 case FineMode.Always: return L.S("Always", "Всегда");
                 case FineMode.Off: return L.S("Off (record only)", "Выкл (только запись)");
+                case FineMode.Witnessed: return L.S("Witnessed", "При свидетелях");
             }
-            return L.S("Witnessed", "При свидетелях");
+            return L.S("Automatic", "Автоматически");
         }
 
         private void SaveSettings()
@@ -856,6 +1110,11 @@ namespace RealisticLifeSimulator.Game
             m.Add(new MenuItem(L.S("Active scenes", "Активные события"), null).WithValue(() =>
                 L.F("{0} NPC accident(s), {1} NPC stop(s)", "ДТП NPC: {0}, остановок: {1}",
                     main.NpcAccidents == null ? 0 : main.NpcAccidents.Active, main.Police == null ? 0 : main.Police.NpcStopsActive)));
+            m.Add(new MenuItem(L.S("Extra police patrols", "Дополнительные патрули"), null).WithValue(() =>
+                main.Patrols == null ? "-" : main.Patrols.Count + " / " + PatrolRules.ExtraUnitsCap(Settings.PolicePatrols, main.Performance.Profile.Kind))
+                .WithDescription(main.Patrols == null ? "" : main.Patrols.Summary()));
+            m.Add(new MenuItem(L.S("Red-light assists this session", "Помощь на светофорах за сеанс"), null).WithValue(() =>
+                main.Traffic == null || main.Traffic.Lights == null ? "-" : main.Traffic.Lights.Assists.ToString()));
             m.Add(new MenuItem(L.S("Profile budget", "Бюджет профиля"), null).WithValue(() => ProfileName(main.Performance.Profile.Kind))
                 .WithDescription(main.Performance.Profile.Summary));
             m.Add(new MenuItem(L.S("Save now", "Сохранить сейчас"), () =>

@@ -47,6 +47,13 @@ namespace RealisticLifeSimulator.Game
             public bool LicenceShown, Refused, Decided;
             public int LeftSince = -1;
             public Vector3 WalkTarget;
+            // 0.6.0 pedestrian scenes
+            public int BystanderCallAt;      // a witness calls 911 for a struck pedestrian
+            public bool VictimLeft;          // walked away or no longer exists
+            public bool VictimSettled;       // sitting on the ground waiting for help
+            public int AmbStage;             // 0 driving, 1 walking to patient, 2 treating, 3 boarding, 4 done
+            public int AmbStageSince;
+            public int AmbNextWalk;
         }
 
         private readonly RlsMain main;
@@ -115,8 +122,50 @@ namespace RealisticLifeSimulator.Game
             lastEngine = engine;
 
             if (scene != null || N.InMission() || N.Wanted() > 0) return;
-            if (dv < 3f && bodyDrop < 8f && engineDrop < 15f) return;
+            if (dv < 3f && bodyDrop < 8f && engineDrop < 15f)
+            {
+                // Hitting a person barely changes the car's velocity, so the impact check above
+                // misses most pedestrian collisions. A cheap, small-radius check every 300 ms.
+                if (set.PedestrianAccidents && ++pedTick % 3 == 0 && before.Length() > 1.5f)
+                    TryDetectPedestrian(p, v, before, now, set);
+                return;
+            }
             TryDetect(p, v, before, bodyDrop + engineDrop, now, set);
+        }
+
+        private int pedTick;
+        private const ulong GET_PED_SOURCE_OF_DEATH = 0x93C8B64DEB84728C;
+
+        private void TryDetectPedestrian(Ped p, Vehicle v, Vector3 velBefore, int now, RlsSettings set)
+        {
+            foreach (Ped ped in World.GetNearbyPeds(p, 7f))
+            {
+                if (!IsStruckPedestrian(ped, v)) continue;
+                int last;
+                if (recentOthers.TryGetValue(ped.Handle, out last) && unchecked(now - last) < 60000) continue;
+                recentOthers[ped.Handle] = now;
+                if (recentOthers.Count > 40) recentOthers.Clear();
+                double kmh = velBefore.Length() * 3.6;
+                N.Call(N.CLEAR_ENTITY_LAST_DAMAGE_ENTITY, ped);
+                if (kmh < 5) return; // a nudge while crawling forward is not an accident
+                StartScene(p, v, null, ped, velBefore, kmh, 0, 0f, now);
+                return;
+            }
+        }
+
+        // A person (not an animal, not in a vehicle, not owned by a mission or by this mod)
+        // that this vehicle has just damaged. A body that was already dead is ignored.
+        private bool IsStruckPedestrian(Ped ped, Vehicle v)
+        {
+            if (ped == null || !ped.Exists() || ped.IsPlayer || ped.IsInVehicle()) return false;
+            if (N.PedType(ped) == 28 || N.IsMissionEntity(ped) || main.Dispatch.IsInUse(ped)) return false;
+            if (!N.Call<bool>(N.HAS_ENTITY_BEEN_DAMAGED_BY_ENTITY, ped, v, true)) return false;
+            if (ped.IsDead)
+            {
+                int source = N.Call<int>(GET_PED_SOURCE_OF_DEATH, ped);
+                if (source != v.Handle && source != GTA.Game.Player.Character.Handle) return false;
+            }
+            return true;
         }
 
         private void TryDetect(Ped p, Vehicle v, Vector3 velBefore, float damage, int now, RlsSettings set)
@@ -138,10 +187,10 @@ namespace RealisticLifeSimulator.Game
             Ped victim = null;
             if (other == null)
             {
+                if (!set.PedestrianAccidents) return;
                 foreach (Ped ped in World.GetNearbyPeds(p, 8f))
                 {
-                    if (ped == null || !ped.Exists() || ped.IsPlayer || ped.IsInVehicle()) continue;
-                    if (N.Call<bool>(N.HAS_ENTITY_BEEN_DAMAGED_BY_ENTITY, ped, v, true)) { victim = ped; break; }
+                    if (IsStruckPedestrian(ped, v)) { victim = ped; break; }
                 }
             }
             if (other == null && victim == null) return; // walls, poles: no other party
@@ -227,20 +276,36 @@ namespace RealisticLifeSimulator.Game
                 }
             }
             else s.Other = OtherState.None;
-            if (victim != null && victim.Exists()) { victim.IsPersistent = true; }
+            if (victim != null && victim.Exists())
+            {
+                victim.IsPersistent = true;
+                if (!victim.IsDead) N.Block(victim); // stays at the scene instead of fleeing
+                // Nobody else is involved, so a witness on the street calls 911.
+                if (main.Config.Settings.NpcCallEmergency) s.BystanderCallAt = now + 7000 + rng.Next(4000);
+            }
             s.OtherSince = now;
             r.OtherDriverState = OtherStateText(s);
 
-            main.Notify(L.F("~o~Traffic accident~s~ ({0}) with {1}.~n~Stop and deal with it: press ~INPUT_CONTEXT~ near the scene.",
-                            "~o~ДТП~s~ ({0}): {1}.~n~Остановитесь и разберитесь: нажмите ~INPUT_CONTEXT~ у места ДТП.",
-                            PoliceRules.SeverityName(s.Severity), r.OtherVehicle));
+            if (victim != null)
+                main.Notify(L.F("~o~Traffic accident~s~ ({0}): you struck a pedestrian.~n~Stop and stay at the scene: press ~INPUT_CONTEXT~ near it.",
+                                "~o~ДТП~s~ ({0}): наезд на пешехода.~n~Остановитесь и оставайтесь на месте: нажмите ~INPUT_CONTEXT~ рядом.",
+                                PoliceRules.SeverityName(s.Severity)));
+            else
+                main.Notify(L.F("~o~Traffic accident~s~ ({0}) with {1}.~n~Stop and deal with it: press ~INPUT_CONTEXT~ near the scene.",
+                                "~o~ДТП~s~ ({0}): {1}.~n~Остановитесь и разберитесь: нажмите ~INPUT_CONTEXT~ у места ДТП.",
+                                PoliceRules.SeverityName(s.Severity), r.OtherVehicle));
             Log.Info(string.Format("Accident {0}: {1}, {2}, player {3:0} km/h, other {4:0} km/h, ahead {5:0.00}",
                 r.Id, s.Severity, r.OtherVehicle, playerKmh, otherKmh, e.OtherAhead));
         }
 
         private string OtherStateText(Scene s)
         {
-            if (s.Victim != null) return s.Victim.Exists() && s.Victim.IsDead ? "Dead" : "Injured";
+            if (s.Victim != null)
+            {
+                if (s.Victim.Exists() && s.Victim.IsDead) return "Dead";
+                if (s.VictimLeft) return "Left";
+                return s.Report != null && s.Report.AmbulanceAttended ? "Treated" : "Injured";
+            }
             if (s.Other == OtherState.Fled) return "Fled";
             if (s.OtherDriver == null) return "None";
             if (!s.OtherDriver.Exists()) return "Unknown";
@@ -258,19 +323,21 @@ namespace RealisticLifeSimulator.Game
                 case "Fled": return L.S("Fled the scene", "Скрылся");
                 case "None": return L.S("No driver (parked)", "Без водителя (припаркован)");
                 case "Unhurt": return L.S("Unhurt", "Не пострадал");
+                case "Left": return L.S("Walked away from the scene", "Ушёл с места ДТП");
+                case "Treated": return L.S("Treated by paramedics", "Помощь медиков оказана");
             }
             return L.S("Unknown", "Неизвестно");
         }
 
         private bool Injured(Scene s)
         {
-            if (s.Victim != null && s.Victim.Exists()) return true;
+            if (s.Victim != null && s.Victim.Exists() && !s.VictimLeft) return true;
             return s.OtherDriver != null && s.OtherDriver.Exists() && (s.OtherDriver.IsDead || s.OtherDriver.IsInjured || s.OtherDriver.Health < 150);
         }
 
         private bool OtherPartyPresent(Scene s)
         {
-            if (s.Victim != null && s.Victim.Exists()) return true;
+            if (s.Victim != null && s.Victim.Exists() && !s.VictimLeft) return true;
             return s.OtherDriver != null && s.OtherDriver.Exists() && s.Other != OtherState.Fled;
         }
 
@@ -285,8 +352,16 @@ namespace RealisticLifeSimulator.Game
             int age = unchecked(now - s.Started);
 
             UpdateOtherDriver(s, now);
+            UpdateVictim(s, now);
             UpdateAmbulance(s, now);
             UpdateInvestigation(s, player, now);
+
+            // The pedestrian walked off and nobody was called: nothing left to handle here.
+            if (s.Victim != null && s.VictimLeft && s.Police == null && s.Ambulance == null && age > 15000)
+            {
+                CloseScene("pedestrian left");
+                return;
+            }
 
             // Leaving the scene
             if (dist > 150f && s.Inv != InvState.Done)
@@ -348,6 +423,68 @@ namespace RealisticLifeSimulator.Game
             }
         }
 
+        // A struck pedestrian: waits for help sitting on the ground, may walk away if only
+        // lightly hurt, and a witness calls 911 if the player does not.
+        private void UpdateVictim(Scene s, int now)
+        {
+            Ped v = s.Victim;
+            if (v == null || s.VictimLeft) return;
+            if (!v.Exists())
+            {
+                VictimGone(s, L.S("The pedestrian is no longer at the scene.", "Пешехода больше нет на месте ДТП."));
+                return;
+            }
+            int age = unchecked(now - s.Started);
+            if (!v.IsDead)
+            {
+                if (N.Dist2D(v.Position, s.Position) > 40f)
+                {
+                    VictimGone(s, L.S("The pedestrian walked away from the scene.", "Пешеход ушёл с места ДТП."));
+                    return;
+                }
+                bool ragdoll = N.Call<bool>(N.IS_PED_RAGDOLL, v);
+                if (!s.VictimSettled && !ragdoll && age > 3000 && s.AmbStage < 2)
+                {
+                    s.VictimSettled = true;
+                    N.Call(N.CLEAR_PED_TASKS, v);
+                    N.Scenario(v, "WORLD_HUMAN_PICNIC"); // sits on the ground, waiting for help
+                }
+            }
+            if (s.BystanderCallAt != 0 && unchecked(now - s.BystanderCallAt) >= 0)
+            {
+                s.BystanderCallAt = 0;
+                bool calledSomething = false;
+                if (s.Ambulance == null) { CallAmbulance(s, false); calledSomething |= s.Ambulance != null; }
+                if (s.Police == null && (s.Severity != AccidentSeverity.Minor || v.IsDead))
+                {
+                    CallPolice(s, true, false);
+                    calledSomething |= s.Police != null;
+                }
+                if (calledSomething)
+                {
+                    s.Report.EmergencyCalledByOther = true;
+                    main.Notify(L.S("A witness called 911 for the injured pedestrian.", "Свидетель вызвал 911 к пострадавшему пешеходу."));
+                }
+            }
+        }
+
+        // Pedestrian gone: cancel an ambulance that is still on its way; police (if called) still come.
+        private void VictimGone(Scene s, string message)
+        {
+            s.VictimLeft = true;
+            s.BystanderCallAt = 0;
+            s.Report.OtherDriverState = "Left";
+            if (s.Ambulance != null && !s.AmbDone && s.AmbStage == 0)
+            {
+                main.Dispatch.SendAway(s.Ambulance);
+                s.AmbDone = true;
+                message += " " + L.S("The ambulance was cancelled.", "Скорая отменена.");
+            }
+            N.Release(s.Victim);
+            main.Notify(message);
+            Log.Info("Accident " + s.Report.Id + ": pedestrian left the scene");
+        }
+
         // ------------------------------------------------------------ emergency services
 
         public bool CallPoliceIfActive()
@@ -395,6 +532,14 @@ namespace RealisticLifeSimulator.Game
             if (!a.Valid) { s.AmbDone = true; return; }
             if (s.AmbSince == 0)
             {
+                if (unchecked(now - a.DispatchedAt) > 180000)
+                {
+                    // Stuck far away (blocked road, water, unreachable scene): give up cleanly.
+                    s.AmbDone = true;
+                    main.Dispatch.SendAway(a);
+                    main.Notify(L.S("The ambulance could not reach the scene.", "Скорая не смогла добраться до места ДТП."));
+                    return;
+                }
                 if (!main.Dispatch.Arrived(a)) return;
                 N.Call(N.SET_VEHICLE_HAS_MUTED_SIRENS, a.Vehicle, true);
                 N.Call(N.TASK_LEAVE_VEHICLE, a.Driver, a.Vehicle, 0);
@@ -403,41 +548,76 @@ namespace RealisticLifeSimulator.Game
                 return;
             }
             int t = unchecked(now - s.AmbSince);
-            Ped patient = s.Victim != null && s.Victim.Exists() ? s.Victim : s.OtherDriver;
+            Ped patient = s.Victim != null && s.Victim.Exists() && !s.VictimLeft ? s.Victim : s.OtherDriver;
             Ped player = GTA.Game.Player.Character;
             bool playerHurt = player.Health < player.MaxHealth - 40;
             Entity treat = patient != null && patient.Exists() && Injured(s) ? (Entity)patient : (playerHurt ? (Entity)player : null);
 
-            if (t > 4000 && t < 4400 && treat != null)
+            // Stage 1: walk to the patient, following them if they moved.
+            if (s.AmbStage <= 1 && t > 3000)
             {
-                Vector3 at = treat.Position + new Vector3(0.8f, 0.8f, 0f);
-                N.WalkTo(a.Driver, at);
-                if (a.Partner != null && a.Partner.Exists()) N.WalkTo(a.Partner, treat.Position + new Vector3(-0.8f, 0.8f, 0f));
-            }
-            if (t > 14000 && t < 14400 && treat != null)
-            {
-                N.Scenario(a.Driver, "CODE_HUMAN_MEDIC_TEND_TO_DEAD");
-                if (a.Partner != null && a.Partner.Exists()) N.Scenario(a.Partner, "CODE_HUMAN_MEDIC_KNEEL");
-            }
-            if (t > 30000)
-            {
-                if (patient != null && patient.Exists() && !patient.IsDead && Injured(s)) patient.Health = Math.Max(patient.Health, 180);
-                if (playerHurt && player.Position.DistanceTo(a.Driver.Position) < 8f)
+                if (s.AmbStage == 0) { s.AmbStage = 1; s.AmbStageSince = now; }
+                if (treat == null) { s.AmbStage = 2; s.AmbStageSince = now - 20000; }
+                else
                 {
-                    player.Health = player.MaxHealth;
-                    int bill = Math.Min(250, GTA.Game.Player.Money);
-                    if (bill > 0)
+                    Vector3 at = treat.Position + new Vector3(0.8f, 0.8f, 0f);
+                    if (unchecked(now - s.AmbNextWalk) >= 0)
                     {
-                        GTA.Game.Player.Money -= bill;
-                        main.Saves.Data.AddTransaction("Medical", L.S("Paramedic treatment", "Помощь медиков"), -bill);
-                        main.Notify(L.F("Paramedics treated you. Bill: {0}.", "Медики оказали вам помощь. Счёт: {0}.", L.Money(bill)));
+                        s.AmbNextWalk = now + 3000;
+                        N.WalkTo(a.Driver, at);
+                        if (a.Partner != null && a.Partner.Exists()) N.WalkTo(a.Partner, treat.Position + new Vector3(-0.8f, 0.8f, 0f));
+                    }
+                    if (N.Dist2D(a.Driver.Position, at) < 1.8f || unchecked(now - s.AmbStageSince) > 25000)
+                    {
+                        // Stage 2: treatment (kneeling medics, no injuries shown).
+                        N.Face(a.Driver, treat);
+                        N.Scenario(a.Driver, "CODE_HUMAN_MEDIC_TEND_TO_DEAD");
+                        if (a.Partner != null && a.Partner.Exists()) N.Scenario(a.Partner, "CODE_HUMAN_MEDIC_KNEEL");
+                        s.AmbStage = 2;
+                        s.AmbStageSince = now;
                     }
                 }
-                s.Report.AmbulanceAttended = true;
-                s.Report.OtherDriverState = OtherStateText(s);
-                s.AmbDone = true;
-                main.Dispatch.SendAway(a);
+                return;
             }
+            if (s.AmbStage == 2 && unchecked(now - s.AmbStageSince) < 16000) return;
+            if (s.AmbStage == 2)
+            {
+                if (patient != null && patient.Exists() && !patient.IsDead && Injured(s)) patient.Health = Math.Max(patient.Health, 180);
+                N.Call(N.CLEAR_PED_TASKS, a.Driver);
+                if (a.Partner != null && a.Partner.Exists()) N.Call(N.CLEAR_PED_TASKS, a.Partner);
+                // A treated pedestrian is taken to hospital in the ambulance.
+                if (s.Victim != null && s.Victim.Exists() && !s.Victim.IsDead && !s.VictimLeft)
+                {
+                    N.Call(N.CLEAR_PED_TASKS, s.Victim);
+                    N.Call(N.TASK_ENTER_VEHICLE, s.Victim, a.Vehicle, 15000, 2, 1.0f, 1, 0);
+                    s.AmbStage = 3;
+                    s.AmbStageSince = now;
+                    return;
+                }
+                s.AmbStage = 4;
+            }
+            if (s.AmbStage == 3 && unchecked(now - s.AmbStageSince) < 15000 && s.Victim != null && s.Victim.Exists() && !s.Victim.IsInVehicle(a.Vehicle))
+                return; // boarding
+
+            // Done: treat the player too if hurt and close by, then the crew leaves.
+            if (playerHurt && player.Position.DistanceTo(a.Driver.Position) < 8f)
+            {
+                player.Health = player.MaxHealth;
+                int bill = Math.Min(250, GTA.Game.Player.Money);
+                if (bill > 0)
+                {
+                    GTA.Game.Player.Money -= bill;
+                    main.Saves.Data.AddTransaction("Medical", L.S("Paramedic treatment", "Помощь медиков"), -bill);
+                    main.Notify(L.F("Paramedics treated you. Bill: {0}.", "Медики оказали вам помощь. Счёт: {0}.", L.Money(bill)));
+                }
+            }
+            s.AmbStage = 4;
+            s.Report.AmbulanceAttended = true;
+            s.Report.OtherDriverState = OtherStateText(s);
+            if (s.Victim != null && s.Victim.Exists() && s.Victim.IsInVehicle(a.Vehicle))
+                main.Notify(L.S("Paramedics are taking the pedestrian to hospital.", "Медики увозят пешехода в больницу."));
+            s.AmbDone = true;
+            main.Dispatch.SendAway(a);
         }
 
         // ------------------------------------------------------------ investigation
@@ -558,7 +738,9 @@ namespace RealisticLifeSimulator.Game
                 RlsSettings set = main.Config.Settings;
                 bool policeHere = s.Police != null && (s.Inv != InvState.Arriving);
                 bool identified = policeHere || rng.NextDouble() < 0.6; // the other driver noted the plate
-                bool fined = set.Fines == FineMode.Always || (set.Fines == FineMode.Witnessed && identified);
+                // Automatic / Witnessed: a reported plate is enough evidence. Always: always fined.
+                bool fined = set.Fines == FineMode.Always
+                          || ((set.Fines == FineMode.Witnessed || set.Fines == FineMode.Automatic) && identified);
                 double fine = fined ? Math.Round(TrafficRules.BaseFine(ViolationType.LeavingScene, 0) * set.FineMultiplier) : 0;
                 main.Traffic.AddViolation(ViolationType.LeavingScene, s.Report.Id, fine, identified,
                     fine > 0 ? PoliceRules.PointsFor(ViolationType.LeavingScene, 0) : 0, false, s.Report.Location);
@@ -566,6 +748,17 @@ namespace RealisticLifeSimulator.Game
                 main.Notify(fine > 0
                     ? L.F("~r~You left the scene of an accident.~s~ Your plate was reported. Fine: {0}.", "~r~Вы скрылись с места ДТП.~s~ Ваш номер передан полиции. Штраф: {0}.", L.Money(fine))
                     : L.S("You left the scene of an accident. It has been recorded.", "Вы уехали с места ДТП. Это записано."));
+
+                // Hit-and-run involving a pedestrian: licence revoked; a fatal one is a crime.
+                if (s.Victim != null && identified && fine > 0)
+                {
+                    DriverProfile prof = main.CurrentProfile();
+                    double play = main.Saves.Data.Stats.TotalPlayTimeSeconds;
+                    LicenceStatus before = LicenceRules.Status(prof, play);
+                    LicenceRules.Revoke(prof, play, L.S("Hit-and-run with a pedestrian", "Скрылся после наезда на пешехода"));
+                    main.AnnounceLicenceChange(before, prof);
+                    if (s.Victim.Exists() && s.Victim.IsDead) N.RaiseWanted(1);
+                }
             }
             CloseScene("left scene");
         }
@@ -644,14 +837,16 @@ namespace RealisticLifeSimulator.Game
             m.Add(new MenuItem(L.S("Your vehicle damage", "Повреждения вашей машины"), null).WithValue(() =>
                 s.PlayerVehicle != null && s.PlayerVehicle.Exists()
                     ? L.Money(PoliceRules.DamageEstimate(s.PlayerVehicle.BodyHealth, s.PlayerVehicle.EngineHealth, 1.0))
-                    : "-").WithDescription(L.S("Rough repair estimate. Repairs arrive with the vehicle maintenance phase.",
-                                               "Примерная стоимость ремонта. Ремонт появится на этапе обслуживания машин.")));
+                    : "-").WithDescription(L.S("Rough repair estimate. Owned cars can be repaired at a repair shop.",
+                                               "Примерная стоимость ремонта. Свою машину можно отремонтировать в автосервисе.")));
             m.Add(new MenuItem(L.S("Emergency services", "Экстренные службы"), null).WithValue(() => ServicesText(s)));
 
-            m.Add(new MenuItem(L.S("Check on the other driver", "Проверить другого водителя"), () =>
+            m.Add(new MenuItem(s.Victim != null ? L.S("Check on the pedestrian", "Проверить пешехода") : L.S("Check on the other driver", "Проверить другого водителя"), () =>
             {
                 string st = OtherStateText(s);
-                PoliceStopSystem.Say(st == "Injured" ? L.S("\"I'm hurt... please call an ambulance.\"", "«Мне плохо... вызовите скорую, пожалуйста.»")
+                PoliceStopSystem.Say(st == "Left" ? L.S("The pedestrian has left.", "Пешеход ушёл.")
+                    : st == "Treated" ? L.S("\"The paramedics have looked after me.\"", "«Медики мне помогли.»")
+                    : st == "Injured" ? L.S("\"I'm hurt... please call an ambulance.\"", "«Мне плохо... вызовите скорую, пожалуйста.»")
                     : st == "Dead" ? L.S("The other person is not responding.", "Другой человек не реагирует.")
                     : st == "Unhurt" ? L.S("\"I'm okay. Look at my car though!\"", "«Я в порядке. Но посмотрите на мою машину!»")
                     : L.S("There is nobody to talk to.", "Здесь не с кем говорить."));
@@ -745,9 +940,11 @@ namespace RealisticLifeSimulator.Game
             m.Add(new MenuItem(L.S("Hand over driving licence", "Передать водительское удостоверение"), () =>
             {
                 s.LicenceShown = true;
-                PoliceStopSystem.Say(L.F("Licence {0}, {1}.", "Права {0}, {1}.", prof.LicenceNumber, prof.Character));
+                // 0.6.0 fix: the officer used to accept any licence. Status comes from LicenceRules.
+                PoliceStopSystem.Say(LicenceRules.OfficerLine(prof, main.Saves.Data.Stats.TotalPlayTimeSeconds));
                 main.Menu.Replace(BuildInvestigationMenu());
-            }).WithEnabled(() => !s.LicenceShown && !s.Refused));
+            }).WithEnabled(() => !s.LicenceShown && !s.Refused)
+              .WithValue(() => s.LicenceShown ? LicenceRules.StatusName(LicenceRules.Status(prof, main.Saves.Data.Stats.TotalPlayTimeSeconds)) : ""));
             m.Add(new MenuItem(L.S("Hand over registration and insurance", "Передать регистрацию и страховку"), () =>
             {
                 Vehicle v = s.PlayerVehicle;
@@ -801,19 +998,46 @@ namespace RealisticLifeSimulator.Game
             bool lie = PoliceRules.IsFalseStatement(s.Statement, f, s.Evidence);
             List<ViolationRecord> issued = new List<ViolationRecord>();
 
-            double fine = Math.Round(PoliceRules.CollisionFine(s.Severity, f) * set.FineMultiplier);
-            if (fine > 0)
+            LicenceStatus licence = LicenceRules.Status(prof, play); // checked even when not handed over
+            bool pedestrian = s.Victim != null;
+            bool victimDead = pedestrian && s.Victim.Exists() && s.Victim.IsDead;
+            if (pedestrian)
             {
-                int pts = s.Severity == AccidentSeverity.Severe ? 6 : PoliceRules.PointsFor(ViolationType.CausingCollision, 0);
-                if (f == Fault.Shared) pts = Math.Max(1, pts / 2);
-                issued.Add(main.Traffic.AddViolation(ViolationType.CausingCollision, r.Id, fine, true, pts, false, r.Location));
+                double pf = PedestrianFine(s.Severity, f, victimDead) * set.FineMultiplier;
+                if (pf > 0)
+                {
+                    int pts = PoliceRules.PointsFor(ViolationType.HitPedestrian, 0);
+                    if (f == Fault.Shared) pts = Math.Max(1, pts / 2);
+                    issued.Add(main.Traffic.AddViolation(ViolationType.HitPedestrian, r.Id, Math.Round(pf), true, pts, false, r.Location));
+                }
+            }
+            else
+            {
+                double fine = Math.Round(PoliceRules.CollisionFine(s.Severity, f) * set.FineMultiplier);
+                if (fine > 0)
+                {
+                    int pts = s.Severity == AccidentSeverity.Severe ? 6 : PoliceRules.PointsFor(ViolationType.CausingCollision, 0);
+                    if (f == Fault.Shared) pts = Math.Max(1, pts / 2);
+                    issued.Add(main.Traffic.AddViolation(ViolationType.CausingCollision, r.Id, fine, true, pts, false, r.Location));
+                }
             }
             if (lie) issued.Add(main.Traffic.AddViolation(ViolationType.FalseStatement, r.Id,
                 Math.Round(TrafficRules.BaseFine(ViolationType.FalseStatement, 0) * set.FineMultiplier), true, PoliceRules.PointsFor(ViolationType.FalseStatement, 0), false, r.Location));
             if (s.Refused) issued.Add(main.Traffic.AddViolation(ViolationType.NoDocuments, r.Id,
                 Math.Round(TrafficRules.BaseFine(ViolationType.NoDocuments, 0) * set.FineMultiplier), true, 0, false, r.Location));
-            if (s.LicenceShown && prof.IsSuspended(play)) issued.Add(main.Traffic.AddViolation(ViolationType.SuspendedLicence, r.Id,
-                Math.Round(TrafficRules.BaseFine(ViolationType.SuspendedLicence, 0) * set.FineMultiplier), true, 0, false, r.Location));
+            if (licence != LicenceStatus.Valid)
+            {
+                ViolationType lt = licence == LicenceStatus.Revoked ? ViolationType.DrivingWhileRevoked : ViolationType.SuspendedLicence;
+                issued.Add(main.Traffic.AddViolation(lt, r.Id, Math.Round(TrafficRules.BaseFine(lt, 0) * set.FineMultiplier), true, 0, false, r.Location));
+                LicenceRules.CaughtDriving(prof, play);
+            }
+            // Pedestrian at fault: a fatal collision revokes the licence, a severe one suspends it.
+            if (pedestrian && f == Fault.Player)
+            {
+                if (victimDead) LicenceRules.Revoke(prof, play, L.S("Fatal collision with a pedestrian", "ДТП со смертью пешехода"));
+                else if (s.Severity == AccidentSeverity.Severe) LicenceRules.Suspend(prof, play, LicenceRules.PoliceSuspensionSeconds, L.S("Severe collision with a pedestrian", "Тяжёлый наезд на пешехода"));
+            }
+            main.AnnounceLicenceChange(licence, prof);
 
             prof.Reputation = PoliceRules.ReputationForAccident(prof.Reputation, s.Severity, f);
 
@@ -834,6 +1058,11 @@ namespace RealisticLifeSimulator.Game
                 : L.S("I couldn't determine fault.", "Установить виновника не удалось."));
             Log.Info("Accident " + r.Id + " investigated: fault " + f + ", fines " + total + (lie ? ", false statement" : ""));
             main.Menu.Replace(BuildInvestigationOutcome(issued, total));
+        }
+
+        private static double PedestrianFine(AccidentSeverity sev, Fault f, bool dead)
+        {
+            return PoliceRules.PedestrianFine(sev, f, dead);
         }
 
         private string Findings(Scene s, Fault f, bool lie)

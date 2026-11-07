@@ -95,6 +95,17 @@ namespace RealisticLifeSimulator.Game
 
         private Responder BorrowPolice(Vector3 target)
         {
+            // A patrol unit of this mod nearby is the most natural responder.
+            if (main.Patrols != null)
+            {
+                Vehicle pv = main.Patrols.Nearest(target, 350f);
+                if (pv != null && !IsInUse(pv))
+                {
+                    Ped pd = pv.Driver;
+                    main.Patrols.HandOver(pv);
+                    if (pd != null && pd.Exists()) return Adopt(pv, pd);
+                }
+            }
             Vehicle best = null;
             float bestD = 350f * 350f;
             foreach (Vehicle v in World.GetNearbyVehicles(target, 350f))
@@ -247,28 +258,53 @@ namespace RealisticLifeSimulator.Game
             leaving.Clear();
         }
 
-        // Road node 200-500 m from target, preferably out of sight (also used by the taxi service).
+        // Road node 200-500 m from target, preferably out of sight (also used by the taxi service
+        // and the patrols).
+        // 0.6.0 fix: the old search walked the Nth-closest nodes 30..220. In dense city areas the
+        // 220th node is still closer than 200 m, and in the countryside the 30th is already past
+        // 500 m, so "no road node found" was logged and no unit came. Now points on rings around
+        // the target are snapped to the nearest road node instead (16 probes at most).
+        private const ulong GET_CLOSEST_VEHICLE_NODE_WITH_HEADING = 0xFF071FB798B803B0;
+
         public bool FindSpawnNode(Vector3 target, out Vector3 pos, out float heading)
         {
             Vector3 fallback = Vector3.Zero;
             float fallbackHeading = 0f;
-            for (int n = 30; n <= 220; n += 10)
+            float[] radii = { 260f, 340f, 420f, 200f };
+            int start = rng.Next(8);
+            foreach (float r in radii)
+            {
+                for (int k = 0; k < 8; k += 2)   // 4 directions per ring, rotated randomly
+                {
+                    double ang = (start + k + (r == 340f ? 1 : 0)) * Math.PI / 4.0;
+                    Vector3 probe = new Vector3(target.X + (float)Math.Cos(ang) * r, target.Y + (float)Math.Sin(ang) * r, target.Z);
+                    OutputArgument p = new OutputArgument(), h = new OutputArgument();
+                    if (!N.Call<bool>(GET_CLOSEST_VEHICLE_NODE_WITH_HEADING, probe.X, probe.Y, probe.Z, p, h, 1, 3f, 0f)) continue;
+                    Vector3 c = p.GetResult<Vector3>();
+                    float d = N.Dist2D(c, target);
+                    if (d < 180f || d > 550f || Math.Abs(c.Z - target.Z) > 120f) continue;
+                    float hd = h.GetResult<float>();
+                    if (fallback == Vector3.Zero) { fallback = c; fallbackHeading = hd; }
+                    if (!N.Call<bool>(N.IS_SPHERE_VISIBLE, c.X, c.Y, c.Z, 4f))
+                    {
+                        pos = c;
+                        heading = hd;
+                        return true;
+                    }
+                }
+            }
+            // Old method as a last resort.
+            for (int n = 30; n <= 220; n += 20)
             {
                 OutputArgument p = new OutputArgument(), h = new OutputArgument(), lanes = new OutputArgument();
                 if (!N.Call<bool>(N.GET_NTH_CLOSEST_VEHICLE_NODE_WITH_HEADING, target.X, target.Y, target.Z, n, p, h, lanes, 1, 3f, 0f))
                     continue;
                 Vector3 c = p.GetResult<Vector3>();
                 float d = N.Dist2D(c, target);
-                if (d < 200f) continue;
-                if (d > 500f) break;
-                float hd = h.GetResult<float>();
-                if (fallback == Vector3.Zero) { fallback = c; fallbackHeading = hd; }
-                if (!N.Call<bool>(N.IS_SPHERE_VISIBLE, c.X, c.Y, c.Z, 4f))
-                {
-                    pos = c;
-                    heading = hd;
-                    return true;
-                }
+                if (d < 150f) continue;
+                if (d > 600f) break;
+                if (fallback == Vector3.Zero) { fallback = c; fallbackHeading = h.GetResult<float>(); }
+                break;
             }
             pos = fallback;
             heading = fallbackHeading;

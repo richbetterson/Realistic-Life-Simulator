@@ -15,7 +15,8 @@ namespace RealisticLifeSimulator.Core
 
     public enum FuelGaugeMode { Always, LowOnly, Off }
 
-    public enum FineMode { Witnessed, Always, Off }
+    // Append only (names are written to Settings.ini). Automatic = 0.6.0 default.
+    public enum FineMode { Witnessed, Always, Off, Automatic }
 
     public sealed class RlsSettings
     {
@@ -37,7 +38,7 @@ namespace RealisticLifeSimulator.Core
 
         // Traffic
         public bool TrafficEnabled = true;
-        public FineMode Fines = FineMode.Witnessed;
+        public FineMode Fines = FineMode.Automatic;
         public int SpeedToleranceKmh = 10;
         public float FineMultiplier = 1.0f;
         public bool DetectSpeeding = true;
@@ -73,6 +74,21 @@ namespace RealisticLifeSimulator.Core
         public float TaxiBaseFare = 3.0f;
         public float TaxiPricePerKm = 2.2f;
         public float TaxiPricePerMinute = 0.35f;
+
+        // 0.6.0
+        public const int CurrentSettingsVersion = 2;
+        public FineTable FineAmounts = new FineTable();
+        public AutoEnforcement Auto = new AutoEnforcement();
+        public PoliceDensity PolicePatrols = PoliceDensity.Normal;
+        public bool PatrolLicenceChecks = true;       // patrols run plate / licence checks
+        public bool PedestrianAccidents = true;
+        public bool SpeedLimiterEnabled = false;
+        public int SpeedLimiterKmh = 60;
+        public bool ShorterRedLights = true;
+        public int MaxRedWaitSeconds = 20;
+        public int AssistGreenSeconds = 10;
+
+        public static readonly FineMode[] FineModeOrder = { FineMode.Automatic, FineMode.Witnessed, FineMode.Always, FineMode.Off };
 
         public static readonly float[] TaxiBaseChoices = { 0f, 2.0f, 3.0f, 5.0f, 8.0f };
         public static readonly float[] TaxiPerKmChoices = { 1.0f, 1.5f, 2.2f, 3.0f, 4.0f };
@@ -120,6 +136,7 @@ namespace RealisticLifeSimulator.Core
             if (!File.Exists(file))
             {
                 settings = s;
+                TrafficRules.Fines = s.FineAmounts;
                 SaveSettings();
                 Log.Info("Created default " + file);
                 return;
@@ -135,6 +152,7 @@ namespace RealisticLifeSimulator.Core
                 Log.Error("Settings.ini unreadable, restoring defaults", ex);
                 TryBackup(file, "unreadable");
                 settings = s;
+                TrafficRules.Fines = s.FineAmounts;
                 SaveSettings();
                 return;
             }
@@ -189,7 +207,60 @@ namespace RealisticLifeSimulator.Core
 
             s.DebugLogging = r.Bool("Debug", "DebugLogging", s.DebugLogging);
 
+            // 0.6.0 sections
+            AutoEnforcement a = s.Auto;
+            a.Speeding = r.Bool("Enforcement", "AutoSpeeding", a.Speeding);
+            a.RedLight = r.Bool("Enforcement", "AutoRedLight", a.RedLight);
+            a.WrongWay = r.Bool("Enforcement", "AutoWrongWay", a.WrongWay);
+            a.FailureToYield = r.Bool("Enforcement", "AutoFailureToYield", a.FailureToYield);
+            a.StopSign = r.Bool("Enforcement", "AutoStopSign", a.StopSign);
+            a.Headlights = r.Bool("Enforcement", "AutoHeadlights", a.Headlights);
+            a.AutoPayFromCash = r.Bool("Enforcement", "AutoPayFromCash", a.AutoPayFromCash);
+
+            FineTable f = s.FineAmounts;
+            f.SpeedingMinor = r.Int("FineAmounts", "SpeedingUpTo20", f.SpeedingMinor, 0, 100000);
+            f.SpeedingMajor = r.Int("FineAmounts", "Speeding21To40", f.SpeedingMajor, 0, 100000);
+            f.SpeedingExtreme = r.Int("FineAmounts", "SpeedingOver40", f.SpeedingExtreme, 0, 100000);
+            f.RedLight = r.Int("FineAmounts", "RedLight", f.RedLight, 0, 100000);
+            f.StopSign = r.Int("FineAmounts", "StopSign", f.StopSign, 0, 100000);
+            f.WrongWay = r.Int("FineAmounts", "WrongWay", f.WrongWay, 0, 100000);
+            f.NoHeadlights = r.Int("FineAmounts", "NoHeadlights", f.NoHeadlights, 0, 100000);
+            f.Reckless = r.Int("FineAmounts", "RecklessDriving", f.Reckless, 0, 100000);
+            f.FailureToYield = r.Int("FineAmounts", "FailureToYield", f.FailureToYield, 0, 100000);
+            f.LeavingScene = r.Int("FineAmounts", "LeavingScene", f.LeavingScene, 0, 100000);
+            f.HitPedestrian = r.Int("FineAmounts", "HitPedestrian", f.HitPedestrian, 0, 100000);
+            f.NoDocuments = r.Int("FineAmounts", "NoDocuments", f.NoDocuments, 0, 100000);
+            f.UnlicensedDriving = r.Int("FineAmounts", "UnlicensedDriving", f.UnlicensedDriving, 0, 100000);
+            f.EvadingPolice = r.Int("FineAmounts", "EvadingPolice", f.EvadingPolice, 0, 100000);
+            f.FalseStatement = r.Int("FineAmounts", "FalseStatement", f.FalseStatement, 0, 100000);
+
+            s.PolicePatrols = r.Enum("Police", "PatrolDensity", s.PolicePatrols);
+            s.PatrolLicenceChecks = r.Bool("Police", "LicenceChecks", s.PatrolLicenceChecks);
+            s.PedestrianAccidents = r.Bool("Accidents", "PedestrianAccidents", s.PedestrianAccidents);
+            s.SpeedLimiterEnabled = r.Bool("SpeedLimiter", "Enabled", s.SpeedLimiterEnabled);
+            s.SpeedLimiterKmh = r.Int("SpeedLimiter", "LimitKmh", s.SpeedLimiterKmh, SpeedLimiterRules.MinKmh, SpeedLimiterRules.MaxKmh);
+            s.ShorterRedLights = r.Bool("TrafficLights", "ShorterRedLights", s.ShorterRedLights);
+            s.MaxRedWaitSeconds = r.Int("TrafficLights", "MaxRedWaitSeconds", s.MaxRedWaitSeconds, 5, 120);
+            s.AssistGreenSeconds = r.Int("TrafficLights", "AssistGreenSeconds", s.AssistGreenSeconds, 4, 30);
+
+            // Settings written before 0.6.0 used "Witnessed" as the default, which almost never
+            // fined anything. Move that old default to Automatic once; any other choice is kept.
+            string ver;
+            int version = 1;
+            if (ini.TryGet("General", "SettingsVersion", out ver))
+            {
+                int parsed;
+                if (int.TryParse(ver, NumberStyles.Integer, CultureInfo.InvariantCulture, out parsed)) version = parsed;
+            }
+            if (version < 2 && s.Fines == FineMode.Witnessed)
+            {
+                s.Fines = FineMode.Automatic;
+                r.Problems = true; // rewrite the file with the new mode and version
+                Log.Info("Settings upgraded: FineMode Witnessed (old default) -> Automatic");
+            }
+
             settings = s;
+            TrafficRules.Fines = s.FineAmounts;
             if (r.Problems || ini.MalformedLines > 0)
             {
                 Log.Warn("Settings.ini had missing or invalid entries; kept a copy and rewrote it.");
@@ -210,6 +281,8 @@ namespace RealisticLifeSimulator.Core
             sb.AppendLine("[General]");
             sb.AppendLine("; Auto | English | Russian");
             sb.AppendLine("Language=" + s.Language);
+            sb.AppendLine("; Format version of this file (do not edit) / версия формата файла");
+            sb.AppendLine("SettingsVersion=" + RlsSettings.CurrentSettingsVersion);
             sb.AppendLine();
             sb.AppendLine("[Performance]");
             sb.AppendLine("; Low | Balanced | High");
@@ -236,6 +309,8 @@ namespace RealisticLifeSimulator.Core
             sb.AppendLine();
             sb.AppendLine("[Traffic]");
             sb.AppendLine("Enabled=" + B(s.TrafficEnabled));
+            sb.AppendLine("; Automatic = police stops when an officer sees it, otherwise cameras fine reliable detections (see [Enforcement])");
+            sb.AppendLine(";             полиция останавливает при свидетелях, иначе штраф с камеры за надёжно обнаруженные нарушения");
             sb.AppendLine("; Witnessed = fine only when police see it / штраф только при свидетелях-полицейских");
             sb.AppendLine("; Always = every detected violation is fined / штраф за каждое нарушение");
             sb.AppendLine("; Off = record only / только запись в историю");
@@ -249,15 +324,64 @@ namespace RealisticLifeSimulator.Core
             sb.AppendLine("DetectHeadlights=" + B(s.DetectHeadlights));
             sb.AppendLine("DetectFailureToYield=" + B(s.DetectFailureToYield));
             sb.AppendLine();
+            sb.AppendLine("[Enforcement]");
+            sb.AppendLine("; FineMode=Automatic: violations fined without a police witness (traffic cameras / patrol radar)");
+            sb.AppendLine("; FineMode=Automatic: какие нарушения штрафуются без полицейского (камеры / радар патруля)");
+            sb.AppendLine("AutoSpeeding=" + B(s.Auto.Speeding));
+            sb.AppendLine("AutoRedLight=" + B(s.Auto.RedLight));
+            sb.AppendLine("AutoWrongWay=" + B(s.Auto.WrongWay));
+            sb.AppendLine("AutoFailureToYield=" + B(s.Auto.FailureToYield));
+            sb.AppendLine("AutoStopSign=" + B(s.Auto.StopSign));
+            sb.AppendLine("AutoHeadlights=" + B(s.Auto.Headlights));
+            sb.AppendLine("; Pay camera fines from cash at once (otherwise pay in the Life Hub) / сразу оплачивать штрафы с камер наличными");
+            sb.AppendLine("AutoPayFromCash=" + B(s.Auto.AutoPayFromCash));
+            sb.AppendLine();
+            sb.AppendLine("[FineAmounts]");
+            sb.AppendLine("; Dollars before FineMultiplier / долларов до умножения на FineMultiplier");
+            FineTable f = s.FineAmounts;
+            sb.AppendLine("SpeedingUpTo20=" + f.SpeedingMinor);
+            sb.AppendLine("Speeding21To40=" + f.SpeedingMajor);
+            sb.AppendLine("SpeedingOver40=" + f.SpeedingExtreme);
+            sb.AppendLine("RedLight=" + f.RedLight);
+            sb.AppendLine("StopSign=" + f.StopSign);
+            sb.AppendLine("WrongWay=" + f.WrongWay);
+            sb.AppendLine("NoHeadlights=" + f.NoHeadlights);
+            sb.AppendLine("RecklessDriving=" + f.Reckless);
+            sb.AppendLine("FailureToYield=" + f.FailureToYield);
+            sb.AppendLine("LeavingScene=" + f.LeavingScene);
+            sb.AppendLine("HitPedestrian=" + f.HitPedestrian);
+            sb.AppendLine("NoDocuments=" + f.NoDocuments);
+            sb.AppendLine("UnlicensedDriving=" + f.UnlicensedDriving);
+            sb.AppendLine("EvadingPolice=" + f.EvadingPolice);
+            sb.AppendLine("FalseStatement=" + f.FalseStatement);
+            sb.AppendLine();
+            sb.AppendLine("[TrafficLights]");
+            sb.AppendLine("; When you are first in line at a red light for MaxRedWaitSeconds, your direction gets a short green");
+            sb.AppendLine("; and cross traffic is held. GTA's own signal cycle is not changed. / укороченное ожидание на красный");
+            sb.AppendLine("ShorterRedLights=" + B(s.ShorterRedLights));
+            sb.AppendLine("MaxRedWaitSeconds=" + s.MaxRedWaitSeconds);
+            sb.AppendLine("AssistGreenSeconds=" + s.AssistGreenSeconds);
+            sb.AppendLine();
+            sb.AppendLine("[SpeedLimiter]");
+            sb.AppendLine("; Life Hub > Vehicle controls > Speed limiter. km/h, 10-300 / ограничитель скорости");
+            sb.AppendLine("Enabled=" + B(s.SpeedLimiterEnabled));
+            sb.AppendLine("LimitKmh=" + s.SpeedLimiterKmh);
+            sb.AppendLine();
             sb.AppendLine("[Police]");
             sb.AppendLine("; Police pull you over for witnessed violations / полиция останавливает за замеченные нарушения");
             sb.AppendLine("TrafficStops=" + B(s.PoliceStops));
             sb.AppendLine("NpcTrafficStops=" + B(s.NpcPoliceStops));
+            sb.AppendLine("; Extra police patrols: Off | Low | Normal | High / дополнительные патрули");
+            sb.AppendLine("PatrolDensity=" + s.PolicePatrols);
+            sb.AppendLine("; Patrols check the licence of drivers they follow / патрули проверяют права");
+            sb.AppendLine("LicenceChecks=" + B(s.PatrolLicenceChecks));
             sb.AppendLine();
             sb.AppendLine("[Accidents]");
             sb.AppendLine("Enabled=" + B(s.AccidentsEnabled));
             sb.AppendLine("MinImpactSpeedKmh=" + s.AccidentMinSpeedKmh);
             sb.AppendLine("OtherDriversCallEmergency=" + B(s.NpcCallEmergency));
+            sb.AppendLine("; Hitting a pedestrian opens an accident scene (ambulance, police) / наезд на пешехода");
+            sb.AppendLine("PedestrianAccidents=" + B(s.PedestrianAccidents));
             sb.AppendLine();
             sb.AppendLine("[NpcTraffic]");
             sb.AppendLine("; Driver personalities and speed limits for NPCs / характеры водителей NPC и ограничения скорости");

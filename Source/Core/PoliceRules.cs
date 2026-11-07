@@ -46,6 +46,8 @@ namespace RealisticLifeSimulator.Core
                 case ViolationType.EvadingPolice: return 6;
                 case ViolationType.FalseStatement: return 2;
                 case ViolationType.FailureToYieldEmergency: return 3;
+                case ViolationType.HitPedestrian: return 6;
+                case ViolationType.DrivingWhileRevoked: return 0;
             }
             return 0;
         }
@@ -101,6 +103,15 @@ namespace RealisticLifeSimulator.Core
             if (f != Fault.Player && f != Fault.Shared) return 0;
             double basis = s == AccidentSeverity.Severe ? 1200 : s == AccidentSeverity.Moderate ? 600 : 250;
             return f == Fault.Shared ? Math.Round(basis / 2) : basis;
+        }
+
+        // Fine for striking a pedestrian (0.6.0): base amount by severity, halved for shared fault.
+        public static double PedestrianFine(AccidentSeverity sev, Fault f, bool dead)
+        {
+            if (f != Fault.Player && f != Fault.Shared) return 0;
+            double factor = dead ? 3.0 : sev == AccidentSeverity.Severe ? 2.0 : sev == AccidentSeverity.Moderate ? 1.0 : 0.5;
+            double fine = TrafficRules.BaseFine(ViolationType.HitPedestrian, 0) * factor;
+            return f == Fault.Shared ? Math.Round(fine / 2) : fine;
         }
 
         // Rough repair estimate from GTA body / engine health (0-1000 each).
@@ -194,6 +205,16 @@ namespace RealisticLifeSimulator.Core
         public int Warnings;
         public double CleanKm;            // distance since the last violation (reputation recovery)
         public List<PointEntry> Points;
+
+        // 0.6.0 licence status (see LicenceRules). Play-time seconds; 0 = not set.
+        public double SuspendedUntilPlay;
+        public double RevokedAtPlay;
+        public double RevocationEndsPlay;
+        public int Suspensions;
+        public int Revocations;
+        public int Reinstatements;
+        public int CaughtWhileSuspended;
+        public string StatusReason;
 
         public DriverProfile()
         {

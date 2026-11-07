@@ -35,6 +35,7 @@ namespace RealisticLifeSimulator.Game
             public int StoppedSince = -1, FleeSince = -1;
             public bool WarnedToStop;
             public bool LicenceShown, RegistrationShown, InsuranceShown, Refused, Answered, Suspended, Decided;
+            public LicenceStatus Licence;   // read from LicenceRules when the licence is handed over
             public int Attitude;
             public Vector3 WalkTarget;
             public int LastWalk;
@@ -91,8 +92,12 @@ namespace RealisticLifeSimulator.Game
             if (pv == null || witness == null || !witness.Exists()) return false;
             Vehicle cv = witness.CurrentVehicle;
             if (cv == null || !cv.Exists() || cv.Driver != witness || (int)cv.ClassType != 18) return false;
-            if (main.Dispatch.IsInUse(cv) || N.IsMissionEntity(cv)) return false;
+            if (main.Dispatch.IsInUse(cv)) return false;
             foreach (NpcStop n in npcStops) if (n.Cop.Vehicle == cv) return false;
+            // Mission vehicles are off limits, except this mod's own patrol cars (handed over).
+            bool patrol = main.Patrols != null && main.Patrols.Owns(cv);
+            if (!patrol && N.IsMissionEntity(cv)) return false;
+            if (patrol) main.Patrols.HandOver(cv);
 
             PlayerStop s = new PlayerStop();
             s.Mode = StopMode.TrafficStop;
@@ -357,13 +362,13 @@ namespace RealisticLifeSimulator.Game
             m.Add(new MenuItem(L.S("Hand over driving licence", "Передать водительское удостоверение"), () =>
             {
                 s.LicenceShown = true;
-                s.Suspended = prof.IsSuspended(play);
-                int pts = prof.ActivePoints(play);
-                Say(s.Suspended
-                    ? L.F("Licence {0}... it's suspended - {1} points. That's a serious offence.", "Права {0}... они приостановлены - {1} баллов. Это серьёзное нарушение.", prof.LicenceNumber, pts)
-                    : L.F("Licence {0}, {1}. {2} active point(s).", "Права {0}, {1}. Активных баллов: {2}.", prof.LicenceNumber, prof.Character, pts));
+                double now = main.Saves.Data.Stats.TotalPlayTimeSeconds;
+                s.Licence = LicenceRules.Status(prof, now);      // the one source of truth
+                s.Suspended = s.Licence != LicenceStatus.Valid;
+                Say(LicenceRules.OfficerLine(prof, now));
                 Refresh();
-            }).WithEnabled(() => !s.LicenceShown && !s.Refused));
+            }).WithEnabled(() => !s.LicenceShown && !s.Refused)
+              .WithValue(() => s.LicenceShown ? LicenceRules.StatusName(s.Licence) : ""));
 
             m.Add(new MenuItem(L.S("Hand over registration", "Передать регистрацию"), () =>
             {
@@ -461,18 +466,30 @@ namespace RealisticLifeSimulator.Game
             SaveData data = main.Saves.Data;
             DriverProfile prof = main.CurrentProfile();
             int now = Environment.TickCount;
+            double play = data.Stats.TotalPlayTimeSeconds;
             stopTimes.RemoveAll(t => unchecked(now - t) > 3600000);
+
+            // The officer checks the licence in the database even if it was not handed over.
+            LicenceStatus before = LicenceRules.Status(prof, play);
+            s.Licence = before;
+            s.Suspended = before != LicenceStatus.Valid;
+            bool licenceStop = s.Type == ViolationType.SuspendedLicence || s.Type == ViolationType.DrivingWhileRevoked;
 
             double chance = PoliceRules.WarningChance(prof.Reputation, s.Attitude, s.Type, s.OverKmh,
                 data.OutstandingFines() > 0, stopTimes.Count);
-            bool warning = !s.Refused && !s.Suspended && rng.NextDouble() < chance;
+            bool warning = !s.Refused && !s.Suspended && !licenceStop && rng.NextDouble() < chance;
             stopTimes.Add(now);
             prof.Stops++;
             data.Driving.TrafficStops++;
             s.Decided = true;
 
             List<ViolationRecord> issued = new List<ViolationRecord>();
-            if (warning)
+            if (licenceStop && before == LicenceStatus.Valid)
+            {
+                // The licence was restored since the check started: nothing to cite.
+                Say(L.S("Your licence checks out. Sorry for the delay, drive safely.", "С правами всё в порядке. Извините за задержку, счастливого пути."));
+            }
+            else if (warning)
             {
                 main.Traffic.AddViolation(s.Type, s.Details, 0, true, 0, true, s.Location);
                 Say(L.S("I'm letting you off with a warning this time. Drive safely.", "На этот раз отпускаю с предупреждением. Будьте внимательны."));
@@ -485,8 +502,19 @@ namespace RealisticLifeSimulator.Game
             }
             if (s.Refused)
                 issued.Add(main.Traffic.AddViolation(ViolationType.NoDocuments, "", Math.Round(TrafficRules.BaseFine(ViolationType.NoDocuments, 0) * set.FineMultiplier), true, 0, false, s.Location));
+            if (s.Suspended && !licenceStop)
+            {
+                ViolationType lt = before == LicenceStatus.Revoked ? ViolationType.DrivingWhileRevoked : ViolationType.SuspendedLicence;
+                issued.Add(main.Traffic.AddViolation(lt, "", Math.Round(TrafficRules.BaseFine(lt, 0) * set.FineMultiplier), true, 0, false, s.Location));
+            }
             if (s.Suspended)
-                issued.Add(main.Traffic.AddViolation(ViolationType.SuspendedLicence, "", Math.Round(TrafficRules.BaseFine(ViolationType.SuspendedLicence, 0) * set.FineMultiplier), true, 0, false, s.Location));
+            {
+                LicenceRules.CaughtDriving(prof, play);
+                main.AnnounceLicenceChange(before, prof);
+                Say(before == LicenceStatus.Revoked
+                    ? L.S("You are not allowed to drive. The revocation has been extended.", "Вам запрещено управлять машиной. Срок лишения продлён.")
+                    : L.S("You must not drive while suspended. This goes on your record.", "С приостановленными правами ездить нельзя. Это занесено в ваше дело."));
+            }
 
             Log.Info("Traffic stop decided: " + (warning ? "warning" : "citation") + " (chance " + chance.ToString("0.00") + ")");
             main.Menu.Replace(BuildOutcomeMenu(warning, issued));
@@ -500,8 +528,11 @@ namespace RealisticLifeSimulator.Game
             double older = main.Saves.Data.OutstandingFines() - total;
 
             Menu m = new Menu(L.S("Officer's decision", "Решение офицера"), stop.Unit.Name);
-            m.Add(new MenuItem(L.S("Result", "Итог"), null).WithValue(() => warning && issued.Count == 0
-                ? L.S("Warning", "Предупреждение") : L.S("Citation", "Штраф")));
+            m.Add(new MenuItem(L.S("Result", "Итог"), null).WithValue(() => issued.Count > 0 ? L.S("Citation", "Штраф")
+                : warning ? L.S("Warning", "Предупреждение") : L.S("No action", "Без последствий")));
+            if (stop.LicenceShown || stop.Decided)
+                m.Add(new MenuItem(L.S("Licence status", "Статус прав"), null).WithValue(() =>
+                    LicenceRules.StatusName(LicenceRules.Status(main.CurrentProfile(), main.Saves.Data.Stats.TotalPlayTimeSeconds))));
             foreach (ViolationRecord r in issued)
             {
                 ViolationRecord rec = r;
@@ -631,7 +662,8 @@ namespace RealisticLifeSimulator.Game
             {
                 if (cv == null || !cv.Exists() || (int)cv.ClassType != 18 || cv.Speed < 3f) continue;
                 Ped cop = cv.Driver;
-                if (cop == null || !cop.Exists() || cop.IsDead || !N.IsCop(cop) || main.Dispatch.IsInUse(cv) || N.IsMissionEntity(cv)) continue;
+                bool patrol = main.Patrols != null && main.Patrols.Owns(cv);
+                if (cop == null || !cop.Exists() || cop.IsDead || !N.IsCop(cop) || main.Dispatch.IsInUse(cv) || (!patrol && N.IsMissionEntity(cv))) continue;
                 Vector3 fwd = cv.ForwardVector;
                 foreach (Vehicle v in list)
                 {
@@ -663,6 +695,7 @@ namespace RealisticLifeSimulator.Game
         {
             NpcStop s = new NpcStop();
             s.Reason = reason;
+            if (main.Patrols != null) main.Patrols.HandOver(cv);
             s.Cop = main.Dispatch.Adopt(cv, cop);
             if (s.Cop.Blip != null && s.Cop.Blip.Exists()) s.Cop.Blip.Delete(); // no map clutter for NPC stops
             s.Driver = d;

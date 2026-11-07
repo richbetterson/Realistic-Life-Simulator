@@ -48,6 +48,40 @@ namespace RealisticLifeSimulator.Game
         public void Shutdown() { }
     }
 
+    // Licence status over time (0.6.0): points expire and timed suspensions end while playing.
+    // Checks every 10 s and announces a change once. Status itself comes from LicenceRules.
+    public sealed class LicenceWatchModule : IModule
+    {
+        private readonly RlsMain main;
+        private string character = "";
+        private LicenceStatus last;
+
+        public LicenceWatchModule(RlsMain main) { this.main = main; }
+
+        public string Name { get { return "Licence"; } }
+        public int IntervalMs { get { return 10000; } }
+
+        public void Start()
+        {
+            DriverProfile p = main.CurrentProfile();
+            character = p.Character;
+            last = LicenceRules.Status(p, main.Saves.Data.Stats.TotalPlayTimeSeconds);
+        }
+
+        public void Update()
+        {
+            DriverProfile p = main.CurrentProfile();
+            double play = main.Saves.Data.Stats.TotalPlayTimeSeconds;
+            LicenceRules.Update(p, play);
+            LicenceStatus now = LicenceRules.Status(p, play);
+            if (p.Character != character) { character = p.Character; last = now; return; } // switched character
+            if (now != last) main.AnnounceLicenceChange(last, p);
+            last = now;
+        }
+
+        public void Shutdown() { }
+    }
+
     // Saves on the configured interval. Skips while the game is loading.
     public sealed class AutosaveModule : IModule
     {
