@@ -118,12 +118,21 @@ namespace RealisticLifeSimulator.Core
                 s *= c.Attitude == PassengerAttitude.Cautious || c.Attitude == PassengerAttitude.Suspicious ? 0.45 : 0.75;
             if (c.PlayerInjured) s += c.Attitude == PassengerAttitude.Friendly || c.Attitude == PassengerAttitude.Neutral ? 0.2 : 0.05;
             if (c.BadWeather && c.Attitude != PassengerAttitude.Suspicious) s += 0.08;
-            s += (Math.Max(0, Math.Min(100, c.Reputation)) - 60) / 200.0; // -0.3 .. +0.2
+            s += ReputationEffect(c.Reputation);
             if (c.VehicleClass == 6 || c.VehicleClass == 7) s *= 0.6;    // sports / super: protective owners
             if (c.VehicleClass == 8) s *= 0.7;                          // motorcycles: pillion is personal
             if (IsWorkClass(c.VehicleClass)) s *= 0.55;                 // on the job
             if (c.VehicleMoving) s *= 0.7;                              // flagging down a moving car
             return Math.Max(0, Math.Min(1, s));
+        }
+
+        // A good record helps (up to +0.2 at 100); a bad one hurts, but at most -0.15 at 0,
+        // so a ruined reputation makes rides harder without locking them out entirely
+        // (reputation recovers only 1 point per 15 clean km).
+        public static double ReputationEffect(double reputation)
+        {
+            double r = Math.Max(0, Math.Min(100, reputation)) - 60;
+            return r >= 0 ? r / 200.0 : r / 400.0;
         }
 
         public static bool Accepts(RideContext c, int seed, out RideRefusal reason)
