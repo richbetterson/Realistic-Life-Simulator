@@ -255,7 +255,7 @@ The mod was written for a low-end laptop (4-core mobile CPU, 2 GB entry-level GP
 
 ## 13. Known limitations
 
-- **Not everything has been run in the game.** See the next section.
+- **Game version.** Developed and tested on the Legacy (DirectX 11) edition, build 1.0.3351.0. The Enhanced edition has not been tried.
 - **Red lights.** GTA exposes no traffic-light state, so a red light is inferred from stopped cars next to you. It can miss violations on empty roads. Camera fines need two or more waiting cars; one waiting car is only recorded. It can be switched off.
 - **Automatic fines** are only as good as the detection: speed limits are inferred from road type, so a street may have a different limit than you expect (edit `Data\SpeedLimits.ini`). Stop / give-way and headlights are never fined by camera by default.
 - **Wrong way** depends on GTA's road data and is disabled at junctions and off-road.
