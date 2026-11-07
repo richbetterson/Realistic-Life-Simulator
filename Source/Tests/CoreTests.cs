@@ -892,6 +892,36 @@ public static partial class CoreTests
         Check(PassengerRules.Score(w, out h) < PassengerRules.Score(car, out h), "work vehicle not harder");
         RideContext hurt = new RideContext(); hurt.Attitude = PassengerAttitude.Neutral; hurt.PlayerInjured = true;
         Check(PassengerRules.Score(hurt, out h) > PassengerRules.Score(n, out h), "injured passenger gets no sympathy");
+
+        // Reputation: good record helps up to +0.2, bad record hurts at most -0.15.
+        Check(Math.Abs(PassengerRules.ReputationEffect(100) - 0.2) < 1e-9, "rep 100 bonus");
+        Check(Math.Abs(PassengerRules.ReputationEffect(60)) < 1e-9, "rep 60 neutral");
+        Check(Math.Abs(PassengerRules.ReputationEffect(0) + 0.15) < 1e-9, "rep 0 penalty");
+        Check(Math.Abs(PassengerRules.ReputationEffect(-50) + 0.15) < 1e-9, "rep clamped low");
+
+        // A ruined reputation makes rides harder but never locks them out.
+        int f0 = AcceptCountRep(PassengerAttitude.Friendly, 0);
+        int n0 = AcceptCountRep(PassengerAttitude.Neutral, 0);
+        int c0 = AcceptCountRep(PassengerAttitude.Cautious, 0);
+        Check(f0 > 1400, "friendly drivers refuse a rep-0 player too often: " + f0);
+        Check(n0 > 600, "neutral drivers refuse a rep-0 player too often: " + n0);
+        Check(c0 > 100, "cautious drivers never accept a rep-0 player: " + c0);
+        Check(n0 < AcceptCountRep(PassengerAttitude.Neutral, 60), "reputation 0 no worse than 60");
+    }
+
+    private static int AcceptCountRep(PassengerAttitude a, double rep)
+    {
+        int n = 0;
+        for (int seed = 0; seed < 2000; seed++)
+        {
+            RideContext c = new RideContext();
+            c.Attitude = a;
+            c.VehicleClass = 1;
+            c.Reputation = rep;
+            RideRefusal r;
+            if (PassengerRules.Accepts(c, seed * 31337, out r)) n++;
+        }
+        return n;
     }
 
     private static void RideReactionsTest()
