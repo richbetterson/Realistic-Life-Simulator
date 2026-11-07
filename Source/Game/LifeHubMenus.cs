@@ -57,7 +57,8 @@ namespace RealisticLifeSimulator.Game
                 .WithDescription(L.S("Driving licence status, points, reinstatement, insurance and your record with the police.",
                                      "Статус прав, баллы, восстановление, страховка и ваша история с полицией.")));
             m.Add(new MenuItem(L.S("Vehicle controls", "Управление машиной"), () => Menu.Push(BuildVehicleControls()))
-                .WithValue(() => main.Limiter != null && main.Limiter.Enabled
+                .WithValue(() => main.Limiter != null && main.Limiter.AutoMode ? L.S("auto limit  >", "авто-лимит  >")
+                    : main.Limiter != null && main.Limiter.Enabled
                     ? L.F("limiter {0}  >", "огранич. {0}  >", main.Config.Settings.SpeedLimiterKmh) : More())
                 .WithDescription(L.S("Speed limiter for the vehicle you drive.", "Ограничитель скорости для машины, которой вы управляете.")));
             m.Add(new MenuItem(L.S("My vehicles", "Мои машины"), () => Menu.Push(BuildMyVehicles()))
@@ -311,13 +312,23 @@ namespace RealisticLifeSimulator.Game
                 if (!ps.OwnedByMe(d)) continue;
                 PropertyDef def = d;
                 OwnedProperty op = ps.Owned(d.Id);
+                bool rental = OwnershipRules.IsRentalInvestment(def);
                 m.Add(new MenuItem(d.Name, () => { ps.SetWaypoint(def); })
-                    .WithValue(() => (ps.Inside == def ? L.S("you are here", "вы здесь") : op.RentedOut ? L.S("rented out", "сдан") : L.S("owned", "ваш"))
+                    .WithValue(() => (ps.Inside == def ? L.S("you are here", "вы здесь")
+                                      : rental ? L.F("rent +{0}", "аренда +{0}", L.Money(def.Rent))
+                                      : op.RentedOut ? L.S("rented out", "сдан") : L.S("owned", "ваш"))
                                      + (def.GarageSlots > 0 ? "  " + ps.StoredCount(def.Id) + "/" + def.GarageSlots : ""))
-                    .WithDescription(PropertySystem.HasInterior(def)
+                    .WithDescription(rental
+                        ? L.S("Rental investment: tenants live here and it cannot be entered. Click to set a waypoint. At the door marker: parking, income, sell.",
+                              "Сдаётся в аренду: здесь живут арендаторы, войти нельзя. Нажмите, чтобы отметить на карте. У маркера двери: парковка, доход, продажа.")
+                        : PropertySystem.CanEnter(def)
                         ? L.S("Click to set a waypoint. At the door marker: enter, garage, rent out, sell.", "Нажмите, чтобы отметить на карте. У маркера двери: войти, гараж, аренда, продажа.")
                         : L.S("Click to set a waypoint. Manage it at its door.", "Нажмите, чтобы отметить на карте. Управление - у двери объекта.")));
             }
+            m.Add(new MenuItem(L.S("Next rent / bills", "Следующая аренда / счета"), null)
+                .WithValue(() => L.F("in {0} min", "через {0} мин", ps.MinutesToNextBill()))
+                .WithDescription(L.S("Apartments and houses are rental investments: buy one and its rent is paid to you with every bill.",
+                                     "Квартиры и дома - это вложение под аренду: купите объект, и арендная плата будет приходить с каждым счётом.")));
             foreach (PropertyDef d in ps.Defs)
             {
                 if (ps.Owned(d.Id) != null) continue;
@@ -334,7 +345,9 @@ namespace RealisticLifeSimulator.Game
             Menu m = new Menu(d.Name, L.S("For sale", "Продаётся"));
             main.Properties.AddDetails(m, d);
             m.Add(new MenuItem(L.S("Set a waypoint to view it", "Отметить на карте для осмотра"), () => main.Properties.SetWaypoint(d))
-                .WithDescription(L.S("Visit the door marker to tour the interior and buy.", "У двери можно осмотреть объект изнутри и купить его.")));
+                .WithDescription(PropertySystem.CanEnter(d)
+                    ? L.S("Visit the door marker to tour the interior and buy.", "У двери можно осмотреть объект изнутри и купить его.")
+                    : L.S("Visit the door marker to buy it. Rental investment: it cannot be entered.", "Купить можно у маркера двери. Объект под аренду: войти нельзя.")));
             m.Add(new MenuItem(L.S("Back", "Назад"), () => Menu.Back()));
             return m;
         }
@@ -347,8 +360,8 @@ namespace RealisticLifeSimulator.Game
             Menu m = new Menu(L.S("Police & legal status", "Полиция и правовой статус"), p.Character);
             m.Add(new MenuItem(L.S("Licence status", "Статус прав"), null)
                 .WithValue(() => LicenceRules.StatusName(LicenceRules.Status(p, Data.Stats.TotalPlayTimeSeconds)))
-                .WithDescription(L.F("Suspended at {0} active points (ends when points expire, after 2 h of play). Revoked at {1} points, after driving while suspended twice, or after a serious pedestrian collision.",
-                                     "Приостанавливаются при {0} баллах (до сгорания баллов, 2 ч игры). Отзываются при {1} баллах, после повторной езды с приостановленными правами или после тяжёлого наезда на пешехода.",
+                .WithDescription(L.F("Suspended at {0} active points (ends when points expire, after 2 h of play). Revoked at {1} points or after driving while suspended twice.",
+                                     "Приостанавливаются при {0} баллах (до сгорания баллов, 2 ч игры). Отзываются при {1} баллах или после повторной езды с приостановленными правами.",
                                      PoliceRules.SuspensionPoints, LicenceRules.RevokePoints)));
             m.Add(new MenuItem(L.S("Reason / time left", "Причина / осталось"), null).WithValue(() =>
             {
@@ -419,13 +432,31 @@ namespace RealisticLifeSimulator.Game
         {
             SpeedLimiter lim = main.Limiter;
             Menu m = new Menu(L.S("Speed limiter", "Ограничитель скорости"), CurrentVehicleText());
-            m.Add(new MenuItem(L.S("Limiter", "Ограничитель"), () =>
+            m.Add(new MenuItem(L.S("Automatic road limit", "Автоматический лимит дороги"), () =>
+            {
+                lim.SetAuto(!lim.AutoMode);
+                Menu.Replace(BuildSpeedLimiter());
+            }).WithValue(() => L.OnOff(lim.AutoMode))
+              .WithDescription(L.S("On: the limiter follows the speed limit of the road you drive on, plus 10 km/h (50 -> 60, 110 -> 120). Off: the manual limiter below is used.",
+                                   "Вкл: ограничитель следует лимиту дороги, по которой вы едете, плюс 10 км/ч (50 -> 60, 110 -> 120). Выкл: работает ручной ограничитель ниже.")));
+            m.Add(new MenuItem(L.S("Applied limit", "Действующий лимит"), null).WithValue(() =>
+            {
+                if (lim.AutoActiveNow)
+                    return lim.AutoRoadLimit > 0
+                        ? L.F("{0} km/h (road {1})", "{0} км/ч (дорога {1})", lim.AutoTargetKmh, lim.AutoRoadLimit)
+                        : L.F("{0} km/h (road unknown, manual value)", "{0} км/ч (дорога не определена, ручное значение)", lim.AutoTargetKmh);
+                return lim.ActiveNow ? lim.AppliedKmh + L.S(" km/h", " км/ч") : L.S("none", "нет");
+            }).WithDescription(L.S("The limit applied to the vehicle you drive right now.", "Лимит, который сейчас действует для вашей машины.")));
+            m.Add(new MenuItem(L.S("Manual limiter", "Ручной ограничитель"), () =>
             {
                 lim.Toggle();
                 Menu.Replace(BuildSpeedLimiter());
             }).WithValue(() => L.OnOff(lim.Enabled))
-              .WithDescription(L.S("When on, the vehicle you drive cannot go faster than the set speed. Braking and steering are not affected.",
-                                   "Когда включён, машина не разгоняется выше заданной скорости. Тормоз и руль работают как обычно.")));
+              .WithDescription(lim.AutoMode
+                  ? L.S("Used when the automatic road limit is off (and as its fallback value when a road cannot be read). The toggle key switches the automatic mode off too.",
+                        "Работает, когда автоматический лимит выключен (и даёт резервное значение, если дорогу не удалось определить). Клавиша вкл/выкл выключает и автоматический режим.")
+                  : L.S("When on, the vehicle you drive cannot go faster than the set speed. Braking and steering are not affected.",
+                        "Когда включён, машина не разгоняется выше заданной скорости. Тормоз и руль работают как обычно.")));
             m.Add(new MenuItem(L.S("Maximum speed", "Максимальная скорость"), null)
                 .WithValue(() => Settings.SpeedLimiterKmh + L.S(" km/h", " км/ч")));
             m.Add(new MenuItem(L.S("Enter a speed...", "Ввести скорость..."), () =>
@@ -794,7 +825,6 @@ namespace RealisticLifeSimulator.Game
             AddAmount(m, ViolationType.FailureToYieldEmergency, null, () => f.FailureToYield, v => f.FailureToYield = v);
             AddAmount(m, ViolationType.Reckless, null, () => f.Reckless, v => f.Reckless = v);
             AddAmount(m, ViolationType.LeavingScene, null, () => f.LeavingScene, v => f.LeavingScene = v);
-            AddAmount(m, ViolationType.HitPedestrian, null, () => f.HitPedestrian, v => f.HitPedestrian = v);
             AddAmount(m, ViolationType.SuspendedLicence, L.S("Driving without a valid licence", "Езда без действующих прав"), () => f.UnlicensedDriving, v => f.UnlicensedDriving = v);
             AddAmount(m, ViolationType.NoDocuments, null, () => f.NoDocuments, v => f.NoDocuments = v);
             AddAmount(m, ViolationType.EvadingPolice, null, () => f.EvadingPolice, v => f.EvadingPolice = v);
@@ -855,12 +885,8 @@ namespace RealisticLifeSimulator.Game
                 SaveSettings();
             }).WithValue(() => Settings.AccidentMinSpeedKmh + L.S(" km/h", " км/ч"))
               .WithDescription(L.S("Light bumps below this speed are not treated as accidents.", "Лёгкие касания ниже этой скорости не считаются ДТП.")));
-            m.Add(new MenuItem(L.S("Other drivers and witnesses call 911", "Водители и свидетели звонят в 911"), () => { Settings.NpcCallEmergency = !Settings.NpcCallEmergency; SaveSettings(); })
+            m.Add(new MenuItem(L.S("Other drivers call 911", "Другие водители звонят в 911"), () => { Settings.NpcCallEmergency = !Settings.NpcCallEmergency; SaveSettings(); })
                 .WithValue(() => L.OnOff(Settings.NpcCallEmergency)));
-            m.Add(new MenuItem(L.S("Pedestrian accidents", "ДТП с пешеходами"), () => { Settings.PedestrianAccidents = !Settings.PedestrianAccidents; SaveSettings(); })
-                .WithValue(() => L.OnOff(Settings.PedestrianAccidents))
-                .WithDescription(L.S("Hitting a pedestrian opens an accident scene: ambulance, police investigation, fines and licence consequences.",
-                                     "Наезд на пешехода открывает ДТП: скорая, разбирательство полиции, штрафы и последствия для прав.")));
             m.Add(new MenuItem(L.S("Police patrols", "Полицейские патрули"), () =>
             {
                 Settings.PolicePatrols = (PoliceDensity)(((int)Settings.PolicePatrols + 1) % 4);

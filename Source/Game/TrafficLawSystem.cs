@@ -579,6 +579,21 @@ namespace RealisticLifeSimulator.Game
             return limits.Classify(s, zone, nf, out cat);
         }
 
+        // 1.1.0 automatic speed limit: the road limit under the player's vehicle.
+        // Uses the same value the HUD shows (refreshed every second while traffic laws are on);
+        // when that is not available (traffic laws off, mission, bicycle) the road is probed
+        // directly. 0 = no reliable value: off-road or no road node within 20 m.
+        public int RoadLimitForAutoLimiter(Vector3 pos)
+        {
+            if (roadKnown && currentLimit > 0) return currentLimit;
+            if (limits == null) return 0;
+            OutputArgument nodePosArg = new OutputArgument();
+            if (!N.Call<bool>(N.GET_CLOSEST_VEHICLE_NODE, pos.X, pos.Y, pos.Z, nodePosArg, 1, 3f, 0)) return 0;
+            Vector3 node = nodePosArg.GetResult<Vector3>();
+            if (N.Dist2D(node, pos) > 20f || Math.Abs(node.Z - pos.Z) > 8f) return 0;
+            return LimitAt(pos);
+        }
+
         // A police officer (on foot or driving) who can see the player.
         private static Ped FindWitness()
         {

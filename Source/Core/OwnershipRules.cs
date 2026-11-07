@@ -206,6 +206,33 @@ namespace RealisticLifeSimulator.Core
             return 30000;
         }
 
+        // 1.1.0: apartments and houses are rental investments. They cannot be entered and are
+        // always let to tenants, so they earn rent every billing cycle. Garages keep working as
+        // before: they can be entered and used, and earn rent only when 'Rent it out' is on.
+        public static bool IsRentalInvestment(PropertyDef d)
+        {
+            return d != null && d.Type != PropertyType.Garage;
+        }
+
+        public static bool EarnsRent(OwnedProperty p, PropertyDef d)
+        {
+            if (p == null || d == null) return false;
+            return IsRentalInvestment(d) || p.RentedOut;
+        }
+
+        // Only garages with a known interior can be entered (the interior list lives in PropertySystem).
+        public static bool CanEnter(PropertyDef d, bool interiorKnown)
+        {
+            return d != null && d.Type == PropertyType.Garage && interiorKnown;
+        }
+
+        // Play seconds until the next bill (rent is paid with the bills). Never negative.
+        public static double SecondsToNextBill(double playSeconds, double lastBillingPlaySeconds, int intervalMinutes)
+        {
+            double left = lastBillingPlaySeconds + Math.Max(1, intervalMinutes) * 60.0 - playSeconds;
+            return Math.Max(0, left);
+        }
+
         // Billing for one cycle: maintenance and premiums out, rent in.
         public static double CycleBalance(IEnumerable<OwnedProperty> props, Func<string, PropertyDef> def,
                                           IEnumerable<OwnedVehicle> vehicles, string owner,
@@ -218,7 +245,7 @@ namespace RealisticLifeSimulator.Core
                 PropertyDef d = def(p.Id);
                 if (d == null) continue;
                 maintenance += d.Maintenance;
-                if (p.RentedOut) rent += d.Rent;
+                if (EarnsRent(p, d)) rent += d.Rent;
             }
             foreach (OwnedVehicle v in vehicles)
             {

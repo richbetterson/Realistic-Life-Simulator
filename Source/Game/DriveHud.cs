@@ -1,4 +1,5 @@
-// Realistic Life Simulator - compact driving panel: speed limit + fuel.
+// Realistic Life Simulator - compact driving panel: speed limit + fuel
+// (+ 1.1.0: a small second line "AUTO 60" / "LIMITER 60" while the speed limiter is active).
 // It sits directly ABOVE the existing SpeedoSignals speedometer (position read, read-only,
 // from scripts\SpeedoSignals.ini) and has the same width, so it never overlaps it.
 // This mod does not draw a speedometer of its own.
@@ -24,7 +25,7 @@ namespace RealisticLifeSimulator.Game
         private float x = 1095f, y = 620f - H - Gap;
 
         private readonly ContainerElement bg, barBack, barFill;
-        private readonly TextElement limitText, fuelText;
+        private readonly TextElement limitText, fuelText, limiterText;
 
         private static readonly Color Normal = Color.FromArgb(255, 236, 238, 241);
         private static readonly Color Dim = Color.FromArgb(200, 170, 176, 186);
@@ -44,6 +45,8 @@ namespace RealisticLifeSimulator.Game
             barFill = new ContainerElement(new PointF(x + 10f, y + 29f), new SizeF(0f, 5f), Good);
             limitText = new TextElement("", new PointF(x + 10f, y + 3f), 0.3f, Dim, Font.ChaletLondon, Alignment.Left, true, false);
             fuelText = new TextElement("", new PointF(x + W - 10f, y + 3f), 0.3f, Normal, Font.ChaletLondon, Alignment.Right, true, false);
+            // 1.1.0: second line, shown only while the speed limiter caps the vehicle.
+            limiterText = new TextElement("", new PointF(x + 10f, y + 15f), 0.24f, Good, Font.ChaletLondon, Alignment.Left, true, false);
         }
 
         private void ReadSpeedoPosition()
@@ -81,9 +84,21 @@ namespace RealisticLifeSimulator.Game
             bool lowFuel = frac >= 0 && frac * 100 <= Math.Max(set.LowFuelWarningPercent, 1);
             bool showFuel = frac >= 0 && (set.FuelGauge == FuelGaugeMode.Always || (set.FuelGauge == FuelGaugeMode.LowOnly && lowFuel));
             int limit = set.TrafficEnabled && set.ShowSpeedLimit ? traffic.CurrentLimit : 0;
-            if (!showFuel && limit <= 0) return;
+            SpeedLimiter lim = main.Limiter;
+            int capKmh = lim != null ? lim.AppliedKmh : 0;
+            if (!showFuel && limit <= 0 && capKmh <= 0) return;
 
             bg.Draw();
+
+            if (capKmh > 0)
+            {
+                // AUTO 60 = automatic road limit (+10) in use; LIMITER 60 = manual limiter.
+                // While slowing down for a lower limit the cap steps down; show the target limit.
+                limiterText.Caption = lim.AutoActiveNow
+                    ? L.F("AUTO {0}", "АВТО {0}", lim.AutoTargetKmh)
+                    : L.F("LIMITER {0}", "ОГРАНИЧ. {0}", capKmh);
+                limiterText.Draw();
+            }
 
             if (limit > 0)
             {

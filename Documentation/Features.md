@@ -103,7 +103,7 @@ In-game testing status is in the [README](../README.md#14-testing-status).
 ## Player accidents
 `Game/AccidentSystem.cs`, `Core/PoliceRules.cs`
 
-- Checked every 100 ms while you drive: a sudden change in velocity or body/engine damage, with another vehicle touching or damaged by your car, or a pedestrian hit. Walls and poles alone are ignored. Minimum impact speed 12 km/h (configurable).
+- Checked every 100 ms while you drive: a sudden change in velocity or body/engine damage, with another vehicle touching or damaged by your car (pedestrians: removed in 1.1). Walls and poles alone are ignored. Minimum impact speed 12 km/h (configurable).
 - **Evidence** at impact: both speeds, whether the other party was ahead, whether it was stopped, and any moving violation of yours in the previous 10 s.
 - **Severity:** minor / moderate / severe, from speed, damage, injury and death.
 - The other driver brakes, gets out (an injured driver stays inside) and waits. After a serious crash they call 911. About 10 % drive off (never after a severe crash).
@@ -150,9 +150,10 @@ In-game testing status is in the [README](../README.md#14-testing-status).
 ## Properties and bills
 `Game/PropertySystem.cs`, `Core/OwnershipRules.cs`, `Data/Properties.ini`
 
-- 18 apartments, houses and garages. Walk to the door marker to see details, tour the interior and buy.
-- Owned: enter, rest (8 hours pass), garage (store or take out owned cars; drive an owned car to the door marker of a property with garage slots and press Context), rent it out, sell for 85 % of the price.
-- Interiors are GTA Online interiors present in story mode. If one fails to load, you are returned outside straight away.
+- 18 apartments, houses and garages. Walk to the door marker to see details and buy (garages: also tour the interior).
+- **1.1: apartments and houses are rental investments.** They cannot be entered. Once bought, tenants live there and the rent is paid with every bill (no switch). The owned menu shows *Rental income*, *Net per bill* and *Next payment*; parking spaces (store or take out owned cars at the door marker) and *Sell* still work.
+- **Garages** (unchanged): enter, garage (store or take out owned cars; drive an owned car to the door marker and press Context), rent it out, sell for 85 % of the price.
+- Garage interiors are GTA Online interiors present in story mode. If one fails to load, you are returned outside straight away.
 - **Bills** every N minutes of play (default 60): maintenance and insurance premiums out, rent in. Unpaid amounts become debt, settled automatically when cash allows.
 
 ## Owned vehicles, wear and insurance
@@ -247,6 +248,8 @@ In-game testing status is in the [README](../README.md#14-testing-status).
 ## Pedestrian accidents (0.6.0)
 `Game/AccidentSystem.cs`, `Core/PoliceRules.cs`
 
+> **Removed in 1.1.** Hitting a pedestrian no longer creates a scene, 911 call, report, fine or licence consequence. The description below is kept for reference and for reports in older saves.
+
 - Detection: every 300 ms while driving above ~5 km/h, people within 7 m that your vehicle damaged (animals, people in vehicles, mission characters and the mod's own responders are excluded; a body that was already dead is ignored).
 - The pedestrian sits on the ground waiting for help. A witness calls 911 after 7–11 s (setting *Other drivers and witnesses call 911*): ambulance always, police for moderate/severe or fatal cases. Only one ambulance per scene.
 - Paramedics walk to the person (following them if they moved, re-tasked every 3 s), kneel and treat them for 16 s with GTA's medic scenarios, then the person boards the ambulance and is taken away. If the person walks more than 40 m away or no longer exists, an ambulance still on its way is cancelled. An ambulance that has not arrived after 3 minutes gives up.
@@ -273,9 +276,12 @@ In-game testing status is in the [README](../README.md#14-testing-status).
 - Input: whole numbers 10–300, optionally followed by "km/h" or "км/ч". Anything else is rejected with a message and the old value is kept.
 - Units: the value is in km/h; GTA works in m/s. The vehicle gets an entity speed cap of (limit + 1.5) / 3.6 m/s, and from 1 km/h below the limit the accelerator input is ignored while moving forward, so the car settles smoothly without braking. Steering, brakes and reverse are never touched.
 - Applies to the vehicle you are driving: cars, motorcycles, bicycles, boats, trucks. Not to helicopters, planes or trains. The cap is removed from a vehicle as soon as you stop driving it, when you switch the limiter off, and when the mod unloads.
+- **Automatic road limit (1.1)** (`AutoSpeedLimitRules`, `AutoSpeedLimitTracker`; setting `[SpeedLimiter] AutoRoadLimit`, off by default). Applied limit = road limit + 10 km/h (30 → 40, 50 → 60, 60 → 70, 80 → 90, 100 → 110, 110 → 120). The road limit is read once per second (`TrafficLawSystem.RoadLimitForAutoLimiter`: the LIMIT panel value, or a direct probe that needs a road node within 20 m). The first value applies at once; a different value must be read twice in a row. An unknown road keeps the last limit for 15 s, then the manual *Maximum speed* is used. A lower limit is approached in 5 km/h steps per 250 ms. Works without the manual switch; not for boats, aircraft or trains. No notification per road; the panel shows *AUTO 60*. Off: the manual limiter behaves exactly as before. The toggle key switches both off.
 
 ## Property interiors (0.6.0)
 `Game/PropertySystem.cs`, `Game/WorldHelpers.cs`
+
+> **1.1:** only garages can be entered. The apartment interiors (LowApt, MidApt, HighApt) are only used to get a player out who loaded an old save made inside one.
 
 | Interior key | Used by | Fallback |
 |---|---|---|

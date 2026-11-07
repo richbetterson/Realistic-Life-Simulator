@@ -81,9 +81,10 @@ namespace RealisticLifeSimulator.Core
         public AutoEnforcement Auto = new AutoEnforcement();
         public PoliceDensity PolicePatrols = PoliceDensity.Normal;
         public bool PatrolLicenceChecks = true;       // patrols run plate / licence checks
-        public bool PedestrianAccidents = true;
+        // 1.1.0: pedestrian accidents were removed; an old "PedestrianAccidents" entry is ignored.
         public bool SpeedLimiterEnabled = false;
         public int SpeedLimiterKmh = 60;
+        public bool AutoSpeedLimit = false;           // 1.1.0: limiter follows the road limit + 10 km/h
         public bool ShorterRedLights = true;
         public int MaxRedWaitSeconds = 20;
         public int AssistGreenSeconds = 10;
@@ -236,9 +237,9 @@ namespace RealisticLifeSimulator.Core
 
             s.PolicePatrols = r.Enum("Police", "PatrolDensity", s.PolicePatrols);
             s.PatrolLicenceChecks = r.Bool("Police", "LicenceChecks", s.PatrolLicenceChecks);
-            s.PedestrianAccidents = r.Bool("Accidents", "PedestrianAccidents", s.PedestrianAccidents);
             s.SpeedLimiterEnabled = r.Bool("SpeedLimiter", "Enabled", s.SpeedLimiterEnabled);
             s.SpeedLimiterKmh = r.Int("SpeedLimiter", "LimitKmh", s.SpeedLimiterKmh, SpeedLimiterRules.MinKmh, SpeedLimiterRules.MaxKmh);
+            s.AutoSpeedLimit = r.Bool("SpeedLimiter", "AutoRoadLimit", s.AutoSpeedLimit);
             s.ShorterRedLights = r.Bool("TrafficLights", "ShorterRedLights", s.ShorterRedLights);
             s.MaxRedWaitSeconds = r.Int("TrafficLights", "MaxRedWaitSeconds", s.MaxRedWaitSeconds, 5, 120);
             s.AssistGreenSeconds = r.Int("TrafficLights", "AssistGreenSeconds", s.AssistGreenSeconds, 4, 30);
@@ -366,6 +367,9 @@ namespace RealisticLifeSimulator.Core
             sb.AppendLine("; Life Hub > Vehicle controls > Speed limiter. km/h, 10-300 / ограничитель скорости");
             sb.AppendLine("Enabled=" + B(s.SpeedLimiterEnabled));
             sb.AppendLine("LimitKmh=" + s.SpeedLimiterKmh);
+            sb.AppendLine("; Automatic: the limiter follows the detected road limit + 10 km/h (50 -> 60, 110 -> 120).");
+            sb.AppendLine("; Off = manual limiter above. / Авто: лимит дороги + 10 км/ч; Выкл = ручной ограничитель");
+            sb.AppendLine("AutoRoadLimit=" + B(s.AutoSpeedLimit));
             sb.AppendLine();
             sb.AppendLine("[Police]");
             sb.AppendLine("; Police pull you over for witnessed violations / полиция останавливает за замеченные нарушения");
@@ -380,8 +384,6 @@ namespace RealisticLifeSimulator.Core
             sb.AppendLine("Enabled=" + B(s.AccidentsEnabled));
             sb.AppendLine("MinImpactSpeedKmh=" + s.AccidentMinSpeedKmh);
             sb.AppendLine("OtherDriversCallEmergency=" + B(s.NpcCallEmergency));
-            sb.AppendLine("; Hitting a pedestrian opens an accident scene (ambulance, police) / наезд на пешехода");
-            sb.AppendLine("PedestrianAccidents=" + B(s.PedestrianAccidents));
             sb.AppendLine();
             sb.AppendLine("[NpcTraffic]");
             sb.AppendLine("; Driver personalities and speed limits for NPCs / характеры водителей NPC и ограничения скорости");

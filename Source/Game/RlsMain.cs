@@ -14,7 +14,7 @@ namespace RealisticLifeSimulator.Game
 {
     public class RlsMain : Script
     {
-        public const string Version = "1.0.0";
+        public const string Version = "1.1.0";
         private const int MaxModuleFailures = 5;
 
         private sealed class ModuleSlot
@@ -217,8 +217,8 @@ namespace RealisticLifeSimulator.Game
             if (firstRun) Saves.Data.V060NoticeShown = true;
             if (!Saves.Data.V060NoticeShown)
             {
-                Notify(L.S("Updated to 1.0: automatic traffic fines, more police patrols, pedestrian accidents, speed limiter, usable property interiors, fixed licence checks. See the Life Hub.",
-                           "Обновление 1.0: автоматические штрафы, больше патрулей, ДТП с пешеходами, ограничитель скорости, рабочие интерьеры, исправлена проверка прав. Подробнее в центре управления."));
+                Notify(L.S("Updated: automatic traffic fines, more police patrols, speed limiter with automatic road limits, rental income from properties, fixed licence checks. See the Life Hub.",
+                           "Обновление: автоматические штрафы, больше патрулей, ограничитель скорости с автоматическими лимитами дорог, доход от сдачи недвижимости, исправлена проверка прав. Подробнее в центре управления."));
                 Saves.Data.V060NoticeShown = true;
             }
             // Licence status (e.g. 24+ points -> revoked) is applied by LicenceWatchModule on its first update.

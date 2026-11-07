@@ -1,8 +1,13 @@
 // Realistic Life Simulator - player traffic accidents.
 //
 // Detection (every 100 ms while driving): a sudden change of velocity or body damage
-// together with a vehicle touching/damaged by the player's car (or a pedestrian hit).
+// together with a vehicle touching/damaged by the player's car.
 // The evidence at the moment of impact is stored for the investigation.
+//
+// 1.1.0: pedestrian accidents are removed. Hitting a pedestrian no longer opens a scene,
+// calls 911, writes a report or issues fines. Only vehicle-vs-vehicle collisions start a
+// scene. The victim branches below stay inert (Victim is always null) so accident reports
+// from older saves still load and display unchanged.
 //
 // At the scene: the other driver brakes, gets out, inspects, and after a serious crash
 // calls 911 (police drive in on the roads; an ambulance if someone is hurt). The player
@@ -122,50 +127,8 @@ namespace RealisticLifeSimulator.Game
             lastEngine = engine;
 
             if (scene != null || N.InMission() || N.Wanted() > 0) return;
-            if (dv < 3f && bodyDrop < 8f && engineDrop < 15f)
-            {
-                // Hitting a person barely changes the car's velocity, so the impact check above
-                // misses most pedestrian collisions. A cheap, small-radius check every 300 ms.
-                if (set.PedestrianAccidents && ++pedTick % 3 == 0 && before.Length() > 1.5f)
-                    TryDetectPedestrian(p, v, before, now, set);
-                return;
-            }
+            if (dv < 3f && bodyDrop < 8f && engineDrop < 15f) return; // no impact (pedestrians are not tracked since 1.1.0)
             TryDetect(p, v, before, bodyDrop + engineDrop, now, set);
-        }
-
-        private int pedTick;
-        private const ulong GET_PED_SOURCE_OF_DEATH = 0x93C8B64DEB84728C;
-
-        private void TryDetectPedestrian(Ped p, Vehicle v, Vector3 velBefore, int now, RlsSettings set)
-        {
-            foreach (Ped ped in World.GetNearbyPeds(p, 7f))
-            {
-                if (!IsStruckPedestrian(ped, v)) continue;
-                int last;
-                if (recentOthers.TryGetValue(ped.Handle, out last) && unchecked(now - last) < 60000) continue;
-                recentOthers[ped.Handle] = now;
-                if (recentOthers.Count > 40) recentOthers.Clear();
-                double kmh = velBefore.Length() * 3.6;
-                N.Call(N.CLEAR_ENTITY_LAST_DAMAGE_ENTITY, ped);
-                if (kmh < 5) return; // a nudge while crawling forward is not an accident
-                StartScene(p, v, null, ped, velBefore, kmh, 0, 0f, now);
-                return;
-            }
-        }
-
-        // A person (not an animal, not in a vehicle, not owned by a mission or by this mod)
-        // that this vehicle has just damaged. A body that was already dead is ignored.
-        private bool IsStruckPedestrian(Ped ped, Vehicle v)
-        {
-            if (ped == null || !ped.Exists() || ped.IsPlayer || ped.IsInVehicle()) return false;
-            if (N.PedType(ped) == 28 || N.IsMissionEntity(ped) || main.Dispatch.IsInUse(ped)) return false;
-            if (!N.Call<bool>(N.HAS_ENTITY_BEEN_DAMAGED_BY_ENTITY, ped, v, true)) return false;
-            if (ped.IsDead)
-            {
-                int source = N.Call<int>(GET_PED_SOURCE_OF_DEATH, ped);
-                if (source != v.Handle && source != GTA.Game.Player.Character.Handle) return false;
-            }
-            return true;
         }
 
         private void TryDetect(Ped p, Vehicle v, Vector3 velBefore, float damage, int now, RlsSettings set)
@@ -184,18 +147,11 @@ namespace RealisticLifeSimulator.Game
                 if (d < best) { best = d; other = o; }
             }
 
+            // Walls, poles and pedestrians: no accident scene. Only another vehicle counts.
+            if (other == null) return;
             Ped victim = null;
-            if (other == null)
-            {
-                if (!set.PedestrianAccidents) return;
-                foreach (Ped ped in World.GetNearbyPeds(p, 8f))
-                {
-                    if (IsStruckPedestrian(ped, v)) { victim = ped; break; }
-                }
-            }
-            if (other == null && victim == null) return; // walls, poles: no other party
 
-            Entity key = other != null ? (Entity)other : victim;
+            Entity key = other;
             int last;
             if (recentOthers.TryGetValue(key.Handle, out last) && unchecked(now - last) < 60000) return;
             recentOthers[key.Handle] = now;
@@ -286,14 +242,9 @@ namespace RealisticLifeSimulator.Game
             s.OtherSince = now;
             r.OtherDriverState = OtherStateText(s);
 
-            if (victim != null)
-                main.Notify(L.F("~o~Traffic accident~s~ ({0}): you struck a pedestrian.~n~Stop and stay at the scene: press ~INPUT_CONTEXT~ near it.",
-                                "~o~ДТП~s~ ({0}): наезд на пешехода.~n~Остановитесь и оставайтесь на месте: нажмите ~INPUT_CONTEXT~ рядом.",
-                                PoliceRules.SeverityName(s.Severity)));
-            else
-                main.Notify(L.F("~o~Traffic accident~s~ ({0}) with {1}.~n~Stop and deal with it: press ~INPUT_CONTEXT~ near the scene.",
-                                "~o~ДТП~s~ ({0}): {1}.~n~Остановитесь и разберитесь: нажмите ~INPUT_CONTEXT~ у места ДТП.",
-                                PoliceRules.SeverityName(s.Severity), r.OtherVehicle));
+            main.Notify(L.F("~o~Traffic accident~s~ ({0}) with {1}.~n~Stop and deal with it: press ~INPUT_CONTEXT~ near the scene.",
+                            "~o~ДТП~s~ ({0}): {1}.~n~Остановитесь и разберитесь: нажмите ~INPUT_CONTEXT~ у места ДТП.",
+                            PoliceRules.SeverityName(s.Severity), r.OtherVehicle));
             Log.Info(string.Format("Accident {0}: {1}, {2}, player {3:0} km/h, other {4:0} km/h, ahead {5:0.00}",
                 r.Id, s.Severity, r.OtherVehicle, playerKmh, otherKmh, e.OtherAhead));
         }

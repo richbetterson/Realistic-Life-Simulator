@@ -1,4 +1,4 @@
-// Realistic Life Simulator - custom vehicle speed limiter (0.6.0).
+// Realistic Life Simulator - custom vehicle speed limiter (0.6.0, automatic road limits 1.1.0).
 //
 // Life Hub > Vehicle controls > Speed limiter: enter a number (km/h) and switch it on.
 // While the player drives a supported vehicle:
@@ -8,6 +8,18 @@
 //     car settles smoothly at the limit. Steering, braking and reversing are never touched.
 // The cap is removed from a vehicle as soon as the player stops driving it (switching cars,
 // getting out, disabling the limiter, unloading the mod). Aircraft and trains are ignored.
+//
+// 1.1.0 automatic speed limit (setting "Automatic road limit", off by default):
+//   * once per second the road limit is read (the same value the LIMIT panel shows) and the
+//     limiter is set to that limit + 10 km/h (50 -> 60, 110 -> 120). It works without
+//     switching the manual limiter on;
+//   * a new road limit must be read twice in a row before it applies (no flicker at junctions);
+//     no notification is shown when the limit changes - the panel shows it;
+//   * when the limit drops below the current speed the cap is lowered in steps (smooth);
+//   * if the road cannot be read reliably (off-road), the last limit is kept for 15 s, then
+//     the manual limiter value is used as the fallback;
+//   * boats are not limited by the automatic mode (no roads); the manual limiter still applies.
+// With the setting off nothing changes: the manual limiter works exactly as in 0.6.0.
 
 using System;
 using GTA;
@@ -20,14 +32,18 @@ namespace RealisticLifeSimulator.Game
         private const ulong SET_ENTITY_MAX_SPEED = 0x0E46A3FCBDE2A1B1;
         private const float NoCap = 1000f;    // m/s: effectively no limit (GTA's default is unlimited)
         private const int ControlAccelerate = 71, ControlPushbikePedal = 136;
+        private const int RoadReadMs = 1000;
 
         // True while GTA's on-screen keyboard is open: the mod's own key handling pauses.
         public static bool TextInputActive;
 
         private readonly RlsMain main;
+        private readonly AutoSpeedLimitTracker tracker = new AutoSpeedLimitTracker();
         private Vehicle capped;
         private int appliedKmh = -1;
         private int announcedHandle;
+        private int nextRoadRead;
+        private bool autoActive;              // the current cap comes from the automatic mode
 
         public SpeedLimiter(RlsMain main) { this.main = main; }
 
@@ -36,9 +52,22 @@ namespace RealisticLifeSimulator.Game
 
         public bool Enabled { get { return main.Config.Settings.SpeedLimiterEnabled; } }
         public int LimitKmh { get { return main.Config.Settings.SpeedLimiterKmh; } }
+        public bool AutoMode { get { return main.Config.Settings.AutoSpeedLimit; } }
 
         // True while the cap is applied to the vehicle the player is driving.
         public bool ActiveNow { get { return capped != null && capped.Exists() && appliedKmh > 0; } }
+
+        // Cap currently applied (km/h), 0 when inactive. May be between two limits while ramping down.
+        public int AppliedKmh { get { return ActiveNow ? appliedKmh : 0; } }
+
+        // True while the active cap comes from the automatic road limit.
+        public bool AutoActiveNow { get { return ActiveNow && autoActive; } }
+
+        // Detected road limit used by the automatic mode (0 = unknown, the fallback is in use).
+        public int AutoRoadLimit { get { return tracker.RoadLimit; } }
+
+        // Limit the automatic mode is aiming for right now (road + 10, or the fallback).
+        public int AutoTargetKmh { get { return tracker.Known ? tracker.AppliedLimit : LimitKmh; } }
 
         public void Start() { }
 
@@ -47,11 +76,16 @@ namespace RealisticLifeSimulator.Game
         public void Update()
         {
             Vehicle v = DrivenVehicle();
-            if (!Enabled || v == null || !SpeedLimiterRules.Supports((int)v.ClassType))
+            int cls = v != null ? (int)v.ClassType : -1;
+            bool useAuto = AutoMode && v != null && AutoSpeedLimitRules.Supports(cls);
+            bool useManual = !useAuto && Enabled && v != null && SpeedLimiterRules.Supports(cls);
+            if (!useAuto) tracker.Reset();
+            if (!useAuto && !useManual)
             {
                 Release();
                 return;
             }
+
             if (capped == null || !capped.Exists() || capped.Handle != v.Handle)
             {
                 Release();
@@ -60,13 +94,33 @@ namespace RealisticLifeSimulator.Game
                 if (announcedHandle != v.Handle)
                 {
                     announcedHandle = v.Handle;
-                    main.Notify(L.F("Speed limiter: {0} km/h.", "Ограничитель скорости: {0} км/ч.", LimitKmh));
+                    if (useAuto) main.Notify(L.S("Automatic speed limit on: road limit + 10 km/h.", "Автоматическое ограничение: лимит дороги + 10 км/ч."));
+                    else main.Notify(L.F("Speed limiter: {0} km/h.", "Ограничитель скорости: {0} км/ч.", LimitKmh));
                 }
             }
-            if (appliedKmh != LimitKmh)
+
+            int target;
+            if (useAuto)
             {
-                N.Call(SET_ENTITY_MAX_SPEED, v, SpeedLimiterRules.CapMetersPerSecond(LimitKmh));
-                appliedKmh = LimitKmh;
+                int now = Environment.TickCount;
+                if (unchecked(now - nextRoadRead) >= 0)
+                {
+                    nextRoadRead = now + RoadReadMs;
+                    int road = 0;
+                    try { road = main.Traffic != null ? main.Traffic.RoadLimitForAutoLimiter(v.Position) : 0; }
+                    catch (Exception ex) { Log.Warn("Automatic speed limit: road read failed: " + ex.Message); }
+                    if (tracker.Feed(road, now))
+                        Log.Debug("Automatic speed limit: road " + tracker.RoadLimit + " -> cap " + AutoTargetKmh);
+                }
+                target = AutoSpeedLimitRules.StepCap(appliedKmh, AutoTargetKmh, SpeedLimiterRules.ToKmh(v.Speed));
+            }
+            else target = LimitKmh;
+
+            autoActive = useAuto;
+            if (appliedKmh != target)
+            {
+                N.Call(SET_ENTITY_MAX_SPEED, v, SpeedLimiterRules.CapMetersPerSecond(target));
+                appliedKmh = target;
             }
         }
 
@@ -101,25 +155,55 @@ namespace RealisticLifeSimulator.Game
             }
             capped = null;
             appliedKmh = -1;
+            autoActive = false;
         }
 
         public void SetEnabled(bool on)
         {
             main.Config.Settings.SpeedLimiterEnabled = on;
             SaveSettings();
-            if (!on) Release();
+            if (!on && !AutoMode) Release();
             announcedHandle = 0;
             main.Notify(on ? L.F("Speed limiter on: {0} km/h.", "Ограничитель скорости включён: {0} км/ч.", LimitKmh)
                            : L.S("Speed limiter off.", "Ограничитель скорости выключен."));
         }
 
-        public void Toggle() { SetEnabled(!Enabled); }
+        // The toggle key: while the automatic mode is on it switches everything off (automatic
+        // mode and manual limiter); otherwise it switches the manual limiter as before.
+        public void Toggle()
+        {
+            if (AutoMode)
+            {
+                main.Config.Settings.AutoSpeedLimit = false;
+                main.Config.Settings.SpeedLimiterEnabled = false;
+                SaveSettings();
+                Release();
+                tracker.Reset();
+                announcedHandle = 0;
+                main.Notify(L.S("Speed limiter off (automatic road limit off).", "Ограничитель скорости выключен (автоматический лимит выключен)."));
+                return;
+            }
+            SetEnabled(!Enabled);
+        }
+
+        public void SetAuto(bool on)
+        {
+            main.Config.Settings.AutoSpeedLimit = on;
+            SaveSettings();
+            Release();          // re-applied on the next update with the right source
+            tracker.Reset();
+            nextRoadRead = 0;
+            announcedHandle = 0;
+            main.Notify(on ? L.S("Automatic speed limit on: road limit + 10 km/h.", "Автоматическое ограничение включено: лимит дороги + 10 км/ч.")
+                           : (Enabled ? L.F("Automatic speed limit off. Manual limiter: {0} km/h.", "Автоматическое ограничение выключено. Ручной ограничитель: {0} км/ч.", LimitKmh)
+                                      : L.S("Automatic speed limit off.", "Автоматическое ограничение выключено.")));
+        }
 
         public void SetLimit(int kmh)
         {
             main.Config.Settings.SpeedLimiterKmh = SpeedLimiterRules.Clamp(kmh);
             SaveSettings();
-            appliedKmh = -1; // re-applied on the next update, also while driving
+            if (!autoActive) appliedKmh = -1; // re-applied on the next update, also while driving
         }
 
         // Shows GTA's on-screen keyboard and returns the typed text (null if cancelled).
@@ -144,6 +228,13 @@ namespace RealisticLifeSimulator.Game
 
         public string StatusText()
         {
+            if (AutoMode)
+            {
+                if (!AutoActiveNow) return L.S("Auto (road + 10)", "Авто (дорога + 10)");
+                return tracker.Known
+                    ? L.F("Auto, {0} km/h (road {1})", "Авто, {0} км/ч (дорога {1})", AutoTargetKmh, tracker.RoadLimit)
+                    : L.F("Auto, {0} km/h (fallback)", "Авто, {0} км/ч (резервный)", AutoTargetKmh);
+            }
             if (!Enabled) return L.S("Off", "Выкл");
             return ActiveNow ? L.F("On, {0} km/h (active)", "Вкл, {0} км/ч (работает)", LimitKmh)
                              : L.F("On, {0} km/h", "Вкл, {0} км/ч", LimitKmh);

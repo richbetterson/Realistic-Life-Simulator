@@ -2,20 +2,26 @@
 
 # Realistic Life Simulator
 
-**A modular life-simulation overhaul for GTA V story mode.** Fuel and gas stations, traffic laws with automatic fines, more police on the streets, police traffic stops, accident scenes (vehicles and pedestrians) with ambulances and police investigations, NPC drivers with personalities, homes you can actually live in, garages, owned cars that wear out, a speed limiter, rides with NPC drivers and a metered taxi service. Every menu works with the mouse, and no keyboard shortcut is assigned unless you choose one.
+**A modular life-simulation overhaul for GTA V story mode.** Fuel and gas stations, traffic laws with automatic fines, more police on the streets, police traffic stops, vehicle accident scenes with ambulances and police investigations, NPC drivers with personalities, homes and apartments that earn rental income, garages, owned cars that wear out, a speed limiter with automatic road limits, rides with NPC drivers and a metered taxi service. Every menu works with the mouse, and no keyboard shortcut is assigned unless you choose one.
 
 Version **1.0** · Single-player (story mode) only · ScriptHookVDotNet v3 · English and Russian interface
 
 > [!NOTE]
-> **Testing status.** 1.0 is the first stable release. The game-independent logic passes **57 of 57 unit tests**, real 0.5.1 settings and save data upgrade without loss, and the author played the release in GTA V story mode before publishing it. See [Testing status](#14-testing-status). Please report any problem you find.
+> **Testing status.** 1.1 passes **66 of 66 unit tests** for the game-independent logic. The 1.1 changes (rental-only properties, removed pedestrian accidents, automatic speed limit) **have not yet been tested in GTA V**. 1.0 was played in story mode by the author before it was published. See [Testing status](#14-testing-status). Please report any problem you find.
+
+### New in 1.1
+
+- **Properties are rental investments.** Apartments and houses can no longer be entered (no tour, no interior, no teleport). Buy one and tenants move in: its rent is paid to you with every bill. The Life Hub shows the rent, the net income per bill and when the next payment is due. **Garages are unchanged**: tour, enter, store and take out cars, rent out. Parking spaces at apartments and houses still work at the door marker.
+- **Pedestrian accidents removed.** Hitting a pedestrian no longer opens an accident scene, calls 911, writes a report or issues fines and points. Vehicle-to-vehicle accidents, ambulances, police investigations and reports work as before.
+- **Automatic speed limit.** *Life Hub > Vehicle controls > Speed limiter > Automatic road limit: On*. The limiter follows the limit of the road you are on **plus 10 km/h** (30 → 40, 50 → 60, 80 → 90, 110 → 120). It changes only after the new limit is read twice in a row, without notifications; the driving panel shows **AUTO 60**. Off-road, the last limit is kept for 15 s, then your manual limiter value is used. Turn it off to get the manual limiter back exactly as before.
 
 ### New in 1.0
 
 - **Traffic fines are issued automatically.** New default mode *Automatic*: a police officer who sees a violation pulls you over; without a witness, speeding, red lights (two or more cars waiting), wrong-way driving and not yielding to sirens are fined by traffic cameras. Uncertain detections are only recorded. Every fine shows the reason, amount, points and who issued it. All amounts are configurable.
 - **More police in the city.** Extra patrol cars, slow neighbourhood patrols, roadside speed checks and foot patrols (Off / Low / Normal / High, at most 1–4 extra units). They appear far away and drive in on the roads; GTA's own police are counted so units are not duplicated.
-- **Pedestrian accidents.** Hitting a pedestrian opens an accident scene: a witness calls 911, one ambulance comes, paramedics kneel and treat the person (non-graphic) and take them to hospital, police investigate. Fines, points and licence consequences; hit-and-run is punished.
+- ~~**Pedestrian accidents.**~~ Removed in 1.1.
 - **Speed limiter.** *Life Hub > Vehicle controls > Speed limiter*: type a speed (e.g. 60) and switch it on.
-- **Property interiors work.** Interiors are streamed before you are moved, with a fallback interior and a safe exit; inside you can sleep, nap, shower, watch TV, save and use the garage.
+- **Property interiors work.** Interiors are streamed before you are moved, with a fallback interior and a safe exit. *Since 1.1 only garages can be entered; apartments and houses are rental investments.*
 - **Driver's licence fixed.** One source of truth: *Valid*, *Suspended* or *Revoked*, shown correctly everywhere (police stops, accident investigations, Life Hub). A revoked licence is never accepted; reinstatement in the Life Hub.
 - **Shorter red-light waits** when you are first in line, with cross traffic held.
 - Bug fixes: police / ambulance / taxi dispatch "no road node found", duplicate speeding + reckless fines, stop-sign false positives on through roads, untranslated receipt categories, and more (see the [changelog](Documentation/Changelog.md)).
@@ -67,13 +73,13 @@ Realistic Life Simulator turns Los Santos into a place where everyday driving ha
 | **Gas stations** | 27 stations. Stand at a real pump, press the Context key (**E** by default), pick an amount, watch the refuelling animation, pay from cash and get a receipt. GTA's jerry can also works. |
 | **Traffic laws** | Speed limits by road type (freeway 110, highway 90, rural 80, city 50, residential 40 km/h; editable per street). Detects speeding, red lights, stop and give-way, wrong way, no headlights at night, reckless driving and failure to yield to sirens. |
 | **Automatic enforcement** *(1.0)* | Fine mode *Automatic* (default): an officer who sees it stops you; otherwise reliable detections are fined by camera (one fine per speeding episode, duplicates blocked by type, place and time). Fines go to *Traffic & fines* (or are paid from cash, optional). |
-| **Licence and reputation** | Michael, Franklin and Trevor each have their own licence, points, insurer and driver reputation (0–100). *Suspended* at 12 active points (points expire after 2 hours of play) or by the police; *Revoked* at 24 points, after driving while suspended twice, or after a serious pedestrian collision. Reinstatement: $1,500 after 3 hours of play, all fines paid. |
+| **Licence and reputation** | Michael, Franklin and Trevor each have their own licence, points, insurer and driver reputation (0–100). *Suspended* at 12 active points (points expire after 2 hours of play) or by the police; *Revoked* at 24 points, or after driving while suspended twice. Reinstatement: $1,500 after 3 hours of play, all fines paid. |
 | **Police patrols** *(1.0)* | Extra patrol cars, slow patrols, roadside speed checks and foot patrols, budgeted and out of sight when created. Patrols can check the licence of the car in front of them. |
-| **Speed limiter** *(1.0)* | Enter a maximum speed (10–300 km/h) for the vehicle you drive; on/off toggle, ±5 km/h buttons, works with cars, bikes, boats and bicycles. |
+| **Speed limiter** *(1.0, auto 1.1)* | Enter a maximum speed (10–300 km/h) for the vehicle you drive; on/off toggle, ±5 km/h buttons, works with cars, bikes, boats and bicycles. *1.1:* optional **Automatic road limit** = road limit + 10 km/h (not for boats). |
 | **Traffic lights** *(1.0)* | If you are first in line at a red light for more than 20 s (configurable), your direction gets a short green and cross traffic waits. |
 | **Police traffic stops** | The officer who saw the violation pulls you over, walks to your window, checks your documents and decides between a warning and a fine. Driving off counts as evading the police. You can also call the police yourself. |
-| **Accidents** | Crashes with vehicles or pedestrians become scenes with evidence, an investigation, fault, a report, and an ambulance when needed. See [section 5](#5-accidents-and-emergency-response). |
-| **Properties** | 18 homes, apartments and garages. View, tour the interior, buy, enter and walk around, sleep, nap, shower, watch TV, save, take cars out of the garage, rent out, sell for 85 %. |
+| **Accidents** | Crashes with other vehicles become scenes with evidence, an investigation, fault, a report, and an ambulance when needed. See [section 5](#5-accidents-and-emergency-response). |
+| **Properties** *(rental 1.1)* | 18 homes, apartments and garages. Apartments and houses are **rental investments**: buy one and its rent is paid with every bill; they cannot be entered. Garages: tour, enter, store and take out cars, rent out. Parking spaces, sell for 85 %. |
 | **Owned vehicles** | Buy at the dealership or register a car you already own. Tracks mileage, engine wear, service intervals, insurance and damage history. Parked cars stay where you left them and are restored later. There is a recovery service, and insured cars that are destroyed pay out. |
 | **Repair shops** | Inspection, service and damage repair, with insurance cover for owned cars. |
 | **Bills** | Maintenance, insurance premiums and rent income are settled every N minutes of play. Whatever your cash doesn't cover becomes debt, which is settled automatically later. |
@@ -94,11 +100,11 @@ The full list, with numbers taken from the source code, is in [Documentation/Fea
 
 ## 5. Accidents and emergency response
 
-**Your accidents.** A collision with another vehicle or a pedestrian above 12 km/h (configurable) opens an accident scene. The evidence is recorded at the moment of impact: both speeds, the direction of impact, whether the other car was stopped, and any violation you committed in the previous 10 seconds. The other driver brakes, gets out (or stays inside if injured), and after a serious crash calls 911. Press **E** at the scene to check on them, exchange details, call the police or an ambulance, wait, or leave.
+**Your accidents.** A collision with another vehicle above 12 km/h (configurable) opens an accident scene. The evidence is recorded at the moment of impact: both speeds, the direction of impact, whether the other car was stopped, and any violation you committed in the previous 10 seconds. The other driver brakes, gets out (or stays inside if injured), and after a serious crash calls 911. Press **E** at the scene to check on them, exchange details, call the police or an ambulance, wait, or leave.
 
 **Investigation.** The officer drives in on the roads (urgently for serious crashes), inspects both cars, talks to the other driver and then to you, decides fault from the evidence, issues fines and points only if you are at fault, and files a report. Leaving the scene of a serious accident is an offence. Paramedics treat injured people (and you, for a bill).
 
-**Pedestrians** *(1.0)*. Hitting a person at 5 km/h or more is detected by its own light check (the impact barely changes the car's speed, so 0.5 missed most of them). The person stays at the scene, sitting on the ground. If you do not call, a witness calls 911 after 7–11 s: one ambulance comes (never more than one per scene), the paramedics walk to the person even if they moved, kneel and treat them with the game's medic animations, and take them to hospital in the ambulance. Police come for moderate and severe cases. If the person walks away or disappears, a pending ambulance is cancelled; an ambulance that cannot reach the scene within 3 minutes gives up. The officer decides fault (you are at fault above 15 km/h or with a violation just before), fines *Striking a pedestrian* (by severity), adds 6 points, and suspends (severe) or revokes (fatal) the licence. Leaving the scene after hitting a pedestrian revokes the licence; leaving after a fatal one also gives a wanted level.
+**Pedestrians** *(removed in 1.1)*. Hitting a pedestrian no longer creates an accident scene, a 911 call, a report, fines or points. Accident reports from older saves that involved a pedestrian are still shown in the Life Hub.
 
 **NPC accidents.** Crashes between NPCs near you play out the same way: the drivers exchange details, and serious ones get police and an ambulance. Traffic slows around the scene. You can call 911 or give a witness statement. Far away, the outcome is worked out without simulating anyone.
 
@@ -162,6 +168,8 @@ The **Life Hub** is the mod's menu. It is drawn in the game's own fonts and work
 
 **Speed limiter:** *Life Hub > Vehicle controls > Speed limiter* → *Enter a speed...* → type `60` → Enter → switch *Limiter* on. The vehicle then does not accelerate past 60 km/h; braking, steering and reversing are unaffected. Values must be whole numbers from 10 to 300. The limit can be changed while driving and applies to whichever vehicle you drive (not to aircraft or trains); it is removed from a car as soon as you leave it.
 
+**Automatic road limit** *(1.1)*: *Life Hub > Vehicle controls > Speed limiter > Automatic road limit: On*. While you drive, the limiter is set to the current road's limit **+ 10 km/h** (residential 40 → 50, city 50 → 60, rural 80 → 90, highway 90 → 100, freeway 110 → 120; your own values in `Data\SpeedLimits.ini` work the same way). It does not need the manual limiter to be on. A new limit applies after it has been read twice in a row (about 2 s), so junctions and bridges do not make it jump; when the limit drops, the cap comes down in steps so the car slows smoothly. No notification is shown for each road; the driving panel shows **AUTO 60** (manual limiter: **LIMITER 60**), and *Applied limit* in the menu shows the road limit. Off-road or when no road can be read, the last limit is kept for 15 s, then your manual *Maximum speed* is used as the fallback. Boats are not affected by the automatic mode. Switching it **Off** returns to the manual limiter with its own on/off and value unchanged. The optional *Speed limiter on / off* key switches the automatic mode off too.
+
 **In the world** you use the game's Context key (**E** by default; the prompt on screen shows it): at a fuel pump, at an accident scene, during a traffic stop, at a property door, at the door marker inside a property, at a garage and at a mechanic.
 
 **Optional shortcuts.** All 11 actions start **unassigned**: Open Life Hub, Open settings, Open properties, Open vehicles, Call police, Passenger / rides menu, Call a taxi, Speed limiter on / off, and three reserved for later phases (bank, roadside assistance, job). Assign them in *Life Hub > Key bindings*. The mod warns you when a key is already used by GTA V, by another mod's INI file or by another action. Modifier keys, mouse buttons and Esc can't be assigned. The mod never changes GTA's own controls.
@@ -218,11 +226,11 @@ Most options can be changed in game under **Life Hub > Settings**. They are save
 | `[Fuel]` | Enabled, `PricePerLiter` = 1.65, `ConsumptionMultiplier` = 1.00, NPC refuelling, low-fuel warning 15 % |
 | `[Traffic]` | Enabled, `FineMode` = **Automatic** / Witnessed / Always / Off, speed tolerance 10 km/h, fine multiplier, and on/off for each violation type |
 | `[Enforcement]` *(1.0)* | Camera fines without a witness: `AutoSpeeding`, `AutoRedLight`, `AutoWrongWay`, `AutoFailureToYield` = true; `AutoStopSign`, `AutoHeadlights` = false; `AutoPayFromCash` = false |
-| `[FineAmounts]` *(1.0)* | Dollars per violation: speeding 150 / 300 / 600 (up to 20 / 21–40 / over 40 km/h), red light 250, stop 150, wrong way 400, headlights 80, reckless 1000, sirens 350, leaving the scene 750, pedestrian 800, no documents 200, no valid licence 1000, evading 1500, false statement 250 |
+| `[FineAmounts]` *(1.0)* | Dollars per violation: speeding 150 / 300 / 600 (up to 20 / 21–40 / over 40 km/h), red light 250, stop 150, wrong way 400, headlights 80, reckless 1000, sirens 350, leaving the scene 750, pedestrian 800 (unused since 1.1), no documents 200, no valid licence 1000, evading 1500, false statement 250 |
 | `[TrafficLights]` *(1.0)* | `ShorterRedLights` = true, `MaxRedWaitSeconds` = 20, `AssistGreenSeconds` = 10 |
-| `[SpeedLimiter]` *(1.0)* | `Enabled` = false, `LimitKmh` = 60 |
+| `[SpeedLimiter]` *(1.0)* | `Enabled` = false, `LimitKmh` = 60, `AutoRoadLimit` = false *(1.1: road limit + 10 km/h)* |
 | `[Police]` | Traffic stops for you, traffic stops for NPCs, `PatrolDensity` = Off / Low / **Normal** / High, `LicenceChecks` = true |
-| `[Accidents]` | Enabled, minimum impact speed 12 km/h, other drivers and witnesses call 911, `PedestrianAccidents` = true |
+| `[Accidents]` | Enabled, minimum impact speed 12 km/h, other drivers call 911 (`PedestrianAccidents` was removed in 1.1 and is ignored) |
 | `[NpcTraffic]` | Personalities and limits, mistakes, making way for sirens, NPC accident scenes |
 | `[Ownership]` | Bills every 60 min, vehicle wear and rate, service interval 400 km, properties on the map |
 | `[Passenger]` | `Enabled` = true |
@@ -251,7 +259,7 @@ The mod was written for a low-end laptop (4-core mobile CPU, 2 GB entry-level GP
 - *Life Hub > Save and status* shows the mod's own frame time (average and peak).
 - A module that keeps failing is switched off for the session instead of taking the whole mod down.
 - Creating a police car, ambulance or taxi loads its models, which can cause a short hitch once per call.
-- *1.0:* police patrols run every 2 s, create at most one unit every 15 s, and never more than 1–4 extra units (2 on the Low profile). The speed limiter only reads the speed of your own car each frame while it is on. The pedestrian check looks at people within 7 m every 300 ms while you drive. The red-light assist does nothing unless you are stopped at a traffic-light junction.
+- *1.0:* police patrols run every 2 s, create at most one unit every 15 s, and never more than 1–4 extra units (2 on the Low profile). The speed limiter only reads the speed of your own car each frame while it is on. *(1.1: the pedestrian check was removed; the automatic road limit reads the road once per second, only while it is on and you drive.)* The red-light assist does nothing unless you are stopped at a traffic-light junction.
 
 ## 13. Known limitations
 
@@ -265,7 +273,8 @@ The mod was written for a low-end laptop (4-core mobile CPU, 2 GB entry-level GP
 - **Speed limiter** uses GTA's entity speed cap plus a throttle cut; very steep downhills or being pushed by another vehicle can briefly exceed the limit by a few km/h.
 - **NPC behaviour is built on GTA's AI.** Ambient reactions (for example panic at gunfire) can interrupt a scene. Every sequence has timeouts and releases its NPCs.
 - **Dispatch** may still fail where no road exists within 550 m (islands, mountains). The call then fails cleanly.
-- **Interiors.** Properties use GTA Online interiors present in story mode. If one still doesn't load, a similar interior is tried, and if none loads you stay outside. Stored cars are not shown inside garage interiors. Houses use the high-end apartment interior.
+- **Interiors.** Since 1.1 only garages can be entered (GTA Online garage interiors present in story mode). If one still doesn't load, a similar garage interior is tried, and if none loads you stay outside. Stored cars are not shown inside garage interiors.
+- **Automatic road limit** *(1.1)* uses the mod's road classification (street name, zone and road-node flags, `Data\SpeedLimits.ini`), the same value as the LIMIT panel. GTA V has no posted speed limits of its own, so a road can occasionally be classed differently from what you expect; add it under `[Streets]` in `SpeedLimits.ini` to fix it.
 - **Coordinates** for gas stations, Life Hubs and properties are approximate and editable.
 - **Money** is the character's cash. A bank account is planned for a later phase.
 - **Cyrillic text** needs GTA fonts that include it, which is certain when the game itself runs in Russian.
@@ -279,7 +288,8 @@ The mod was written for a low-end laptop (4-core mobile CPU, 2 GB entry-level GP
 | Check | Result |
 |---|---|
 | Compiles against ScriptHookVDotNet 3.7 with the Windows C# compiler | ✅ 0 errors |
-| Core unit tests (`Source/Tests/CoreTests.cs`, `V060Tests.cs`): configuration and repair, key bindings, saves and migrations (schema 1→7), fuel, speed limits, fines, licence points, fault rules, NPC personalities, ownership and insurance, passenger rules, taxi fares, and for 1.0: enforcement decisions, speeding episodes, duplicate protection, false-positive guards, fine amounts, settings upgrade, licence status and reinstatement, speed limiter input and units, patrol budgets, traffic-light rules, pedestrian fines | ✅ **57 / 57 passed** |
+| Core unit tests (`Source/Tests/CoreTests.cs`, `V060Tests.cs`, `V110Tests.cs`): configuration and repair, key bindings, saves and migrations (schema 1→7), fuel, speed limits, fines, licence points, fault rules, NPC personalities, ownership and insurance, passenger rules, taxi fares, and for 1.0: enforcement decisions, speeding episodes, duplicate protection, false-positive guards, fine amounts, settings upgrade, licence status and reinstatement, speed limiter input and units, patrol budgets, traffic-light rules, pedestrian fines; for 1.1: automatic limit +10 km/h, stability and fallback, smooth ramp-down, auto setting round trip, settings upgrade, rental-only properties, rental billing, save compatibility, pedestrian detection removed | ✅ **66 / 66 passed** |
+| 1.1 changes in GTA V (rental properties, garages, no pedestrian accidents, automatic road limit) | ⚠️ **not yet tested in game** |
 | Upgrade of the real 0.5.1 configuration, key bindings and save to 1.0 (on copies) | ✅ all values and records kept; saved and reloaded as schema 7 |
 | Every native function hash used in 1.0, checked against ScriptHookVDotNet's own list | ✅ |
 | **Played in GTA V by the author before the 1.0 release** (story mode, Legacy build 1.0.3351.0) | ✅ checked by the author |
@@ -302,8 +312,8 @@ Unit tests check the game-independent rules in `Source/Core`. Code that talks to
 | Taxi never arrives | Some places have no road the dispatcher can use; walk to a main road and call again. The booking cancels itself after 5 minutes. |
 | Fines feel too strict / too lenient | *Life Hub > Traffic & fines > Enforcement and fine amounts*: change the fine mode, switch camera types off, or change amounts. |
 | Too many / too few police | *Settings > Police and accidents > Police patrols* (Off / Low / Normal / High). |
-| Can't enter my property | It must be yours and not rented out (*Rent it out: Off*), and you must be on foot without a wanted level. If the interior does not load, wait a few seconds and try again; the log shows "Interior not available". |
-| The car won't go faster | The speed limiter is on: *Life Hub > Vehicle controls > Speed limiter*. |
+| Can't enter my property | Since 1.1 apartments and houses cannot be entered: they are rental investments. Garages can be entered if they are yours and not rented out (*Rent it out: Off*), and you must be on foot without a wanted level. If the interior does not load, wait a few seconds and try again; the log shows "Interior not available". |
+| The car won't go faster | The speed limiter is on: *Life Hub > Vehicle controls > Speed limiter* (also check *Automatic road limit*; the panel shows **AUTO** or **LIMITER**). |
 
 When reporting a problem, please attach `RealisticLifeSimulator.log` (with Debug logging on), your game build and your ScriptHookV / ScriptHookVDotNet versions.
 
@@ -318,4 +328,4 @@ When reporting a problem, please attach `RealisticLifeSimulator.log` (with Debug
 
 ## 17. Development status
 
-Version 1.0 is the first stable release. It contains Phases 1–5, the 0.5.1 passenger/taxi update and the enforcement / police / accidents / interiors update (developed as 0.6.0). Next on the [roadmap](Documentation/Roadmap.md): Phase 6 (economy, banking and jobs), Phase 7 (emergency services and roadside assistance), Phase 8 (world events and weather), Phase 9 (interface integration), Phase 10 (optimisation and compatibility testing). See the [changelog](Documentation/Changelog.md) for the version history.
+Version 1.1 turns apartments and houses into rental investments, removes pedestrian accidents and adds the automatic road limit. Version 1.0 was the first stable release. It contains Phases 1–5, the 0.5.1 passenger/taxi update and the enforcement / police / accidents / interiors update (developed as 0.6.0). Next on the [roadmap](Documentation/Roadmap.md): Phase 6 (economy, banking and jobs), Phase 7 (emergency services and roadside assistance), Phase 8 (world events and weather), Phase 9 (interface integration), Phase 10 (optimisation and compatibility testing). See the [changelog](Documentation/Changelog.md) for the version history.

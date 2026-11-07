@@ -55,6 +55,7 @@ public static partial class CoreTests
         Run("Passenger: seats - driver seat is never a passenger seat", SeatTest);
         Run("Taxi: fare, rounding and cash/debt settlement", TaxiFareTest);
         RunV060();
+        RunV110();
 
         Console.WriteLine();
         Console.WriteLine("Passed: " + passed + "  Failed: " + failed);
@@ -661,7 +662,8 @@ public static partial class CoreTests
         Check(OwnershipRules.CurrentValue(100000, 1000000, 0) > 0, "value never zero");
 
         PropertyDef a = new PropertyDef(); a.Id = "A"; a.Maintenance = 500; a.Rent = 1200;
-        PropertyDef b = new PropertyDef(); b.Id = "B"; b.Maintenance = 100; b.Rent = 300;
+        // 1.1.0: apartments/houses always earn rent; B is a garage, which earns rent only when rented out.
+        PropertyDef b = new PropertyDef(); b.Id = "B"; b.Type = PropertyType.Garage; b.Maintenance = 100; b.Rent = 300;
         List<OwnedProperty> props = new List<OwnedProperty>();
         OwnedProperty pa = new OwnedProperty(); pa.Id = "A"; pa.Owner = "M"; pa.RentedOut = true; props.Add(pa);
         OwnedProperty pb = new OwnedProperty(); pb.Id = "B"; pb.Owner = "M"; props.Add(pb);

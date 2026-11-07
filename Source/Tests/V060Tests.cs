@@ -170,7 +170,7 @@ public static partial class CoreTests
         Check(!s.SpeedLimiterEnabled && s.SpeedLimiterKmh == 60 && s.PolicePatrols == PoliceDensity.Normal && s.ShorterRedLights, "defaults");
         Check(s.Auto.Speeding && s.Auto.RedLight && !s.Auto.StopSign && !s.Auto.AutoPayFromCash, "enforcement defaults");
         s.SpeedLimiterEnabled = true; s.SpeedLimiterKmh = 85; s.PolicePatrols = PoliceDensity.High; s.PatrolLicenceChecks = false;
-        s.ShorterRedLights = false; s.MaxRedWaitSeconds = 45; s.AssistGreenSeconds = 12; s.PedestrianAccidents = false;
+        s.ShorterRedLights = false; s.MaxRedWaitSeconds = 45; s.AssistGreenSeconds = 12;
         s.Auto.WrongWay = false; s.Auto.AutoPayFromCash = true;
         c.SaveSettings();
         ConfigurationManager c2 = new ConfigurationManager(p);
@@ -179,7 +179,7 @@ public static partial class CoreTests
         Check(r.SpeedLimiterEnabled && r.SpeedLimiterKmh == 85, "limiter lost");
         Check(r.PolicePatrols == PoliceDensity.High && !r.PatrolLicenceChecks, "patrols lost");
         Check(!r.ShorterRedLights && r.MaxRedWaitSeconds == 45 && r.AssistGreenSeconds == 12, "traffic lights lost");
-        Check(!r.PedestrianAccidents && !r.Auto.WrongWay && r.Auto.AutoPayFromCash, "accident / enforcement lost");
+        Check(!r.Auto.WrongWay && r.Auto.AutoPayFromCash, "enforcement lost");
         Check(Directory.GetFiles(p.ConfigBackups).Length == 0, "valid file treated as invalid");
         // Limiter value outside 10-300 is rejected on load.
         File.WriteAllText(p.SettingsFile, File.ReadAllText(p.SettingsFile).Replace("LimitKmh=85", "LimitKmh=5000"));

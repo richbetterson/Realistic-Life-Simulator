@@ -1,7 +1,14 @@
 // Realistic Life Simulator - properties, garages and bills.
 //
-// For sale: walk to the door marker (map icon), see details, tour the interior, buy.
-// Owned: enter (interior), rest, garage (store / take out owned cars), rent it out, sell (85 %).
+// 1.1.0: apartments and houses are rental investments only. They cannot be entered (no tour,
+// no interior, no teleport); once bought, tenants live there and the owner receives rent with
+// every bill (OwnershipRules.EarnsRent). Their parking spaces (GarageSlots) still work from the
+// door marker. Garage properties are unchanged: tour, enter, store / take out cars, rent out.
+// A player who loads an old save while standing inside an apartment interior is still offered
+// the exit, so nobody gets stuck.
+//
+// For sale: walk to the door marker (map icon), see details, buy (garages: tour the interior).
+// Owned: garage (store / take out owned cars), rental income, sell (85 %); garages: enter, rent out.
 // Garages: drive an owned car to the door marker of a property with garage slots and press
 // the Context key to store it; on foot, open the garage to take a car out.
 // Bills every N minutes of play: maintenance and insurance premiums out, rent in.
@@ -100,6 +107,20 @@ namespace RealisticLifeSimulator.Game
             return d != null && d.Interior != "None" && Interiors.ContainsKey(d.Interior);
         }
 
+        // 1.1.0: only garages can be entered; apartments and houses are rental investments.
+        public static bool CanEnter(PropertyDef d)
+        {
+            return OwnershipRules.CanEnter(d, HasInterior(d));
+        }
+
+        // Minutes of play until the next bill / rent payment.
+        public int MinutesToNextBill()
+        {
+            double s = OwnershipRules.SecondsToNextBill(Data.Stats.TotalPlayTimeSeconds, Data.LastBillingPlaySeconds,
+                                                        main.Config.Settings.BillingIntervalMinutes);
+            return (int)Math.Ceiling(s / 60.0);
+        }
+
         public void Start()
         {
             string f = main.Paths.PropertiesFile;
@@ -139,7 +160,10 @@ namespace RealisticLifeSimulator.Game
                 b.Color = mine ? BlipColor.Green : BlipColor.White;
                 b.Scale = mine ? 0.85f : 0.7f;
                 b.IsShortRange = !mine;
-                b.Name = mine ? d.Name : L.F("For sale: {0}", "Продаётся: {0}", d.Name);
+                bool rental = OwnershipRules.IsRentalInvestment(d);
+                b.Name = mine ? (rental ? L.F("Rental: {0}", "Аренда: {0}", d.Name) : d.Name)
+                              : (rental ? L.F("For sale (rental): {0}", "Продаётся (под аренду): {0}", d.Name)
+                                        : L.F("For sale: {0}", "Продаётся: {0}", d.Name));
                 blips[d.Id] = b;
             }
         }
@@ -305,9 +329,12 @@ namespace RealisticLifeSimulator.Game
             }
 
             if (nearDist > 1.6f) return;
+            bool rental = OwnershipRules.IsRentalInvestment(d);
             GTA.UI.Screen.ShowHelpTextThisFrame(mine
-                ? L.S("Press ~INPUT_CONTEXT~ for your property.", "Нажмите ~INPUT_CONTEXT~: ваша недвижимость.")
-                : L.S("Press ~INPUT_CONTEXT~ to view this property.", "Нажмите ~INPUT_CONTEXT~, чтобы посмотреть объект."));
+                ? (rental ? L.S("Press ~INPUT_CONTEXT~ to manage your rental property.", "Нажмите ~INPUT_CONTEXT~: ваша арендная недвижимость.")
+                          : L.S("Press ~INPUT_CONTEXT~ for your property.", "Нажмите ~INPUT_CONTEXT~: ваша недвижимость."))
+                : (rental ? L.S("Press ~INPUT_CONTEXT~ to view this rental investment.", "Нажмите ~INPUT_CONTEXT~: объект для сдачи в аренду.")
+                          : L.S("Press ~INPUT_CONTEXT~ to view this property.", "Нажмите ~INPUT_CONTEXT~, чтобы посмотреть объект.")));
             if (NativeInput.JustPressed(GTA.Control.Context))
                 main.Menu.Open(mine ? BuildOwnedMenu(d) : BuildForSaleMenu(d, false));
         }
@@ -327,6 +354,10 @@ namespace RealisticLifeSimulator.Game
         public void AddDetails(Menu m, PropertyDef d)
         {
             m.Add(new MenuItem(L.S("Type", "Тип"), null).WithValue(() => TypeName(d.Type)));
+            if (OwnershipRules.IsRentalInvestment(d))
+                m.Add(new MenuItem(L.S("Use", "Назначение"), null).WithValue(() => L.S("rental investment", "сдача в аренду"))
+                    .WithDescription(L.S("Tenants live here: it cannot be entered. The owner receives the rent with every bill. Parking spaces can be used at the door marker.",
+                                         "Здесь живут арендаторы: войти нельзя. Владелец получает арендную плату с каждым счётом. Парковочные места доступны у маркера двери.")));
             m.Add(new MenuItem(L.S("Price", "Цена"), null).WithValue(() => L.Money(d.Price)));
             m.Add(new MenuItem(L.S("Luxury", "Класс"), null).WithValue(() => d.Luxury + " / 5"));
             m.Add(new MenuItem(L.S("Garage spaces", "Мест в гараже"), null).WithValue(() => d.GarageSlots.ToString()));
@@ -339,7 +370,7 @@ namespace RealisticLifeSimulator.Game
             OwnedProperty owner = Owned(d.Id);
             Menu m = new Menu(d.Name, owner != null ? L.F("Owned by {0}", "Владелец: {0}", owner.Owner) : L.S("For sale", "Продаётся"));
             AddDetails(m, d);
-            if (!fromInside && HasInterior(d))
+            if (!fromInside && CanEnter(d))
                 m.Add(new MenuItem(L.S("Tour the interior", "Осмотреть изнутри"), () =>
                 {
                     main.Menu.Close();
@@ -356,8 +387,9 @@ namespace RealisticLifeSimulator.Game
         private Menu BuildOwnedMenu(PropertyDef d)
         {
             OwnedProperty o = Owned(d.Id);
-            Menu m = new Menu(d.Name, L.S("Your property", "Ваша недвижимость"));
-            if (HasInterior(d))
+            bool rental = OwnershipRules.IsRentalInvestment(d);
+            Menu m = new Menu(d.Name, rental ? L.S("Your rental property", "Ваша арендная недвижимость") : L.S("Your property", "Ваша недвижимость"));
+            if (CanEnter(d))
                 m.Add(new MenuItem(L.S("Enter", "Войти"), () => { main.Menu.Close(); Enter(d, false); })
                     .WithEnabled(() => !o.RentedOut)
                     .WithDescription(o.RentedOut
@@ -367,13 +399,29 @@ namespace RealisticLifeSimulator.Game
             if (d.GarageSlots > 0)
                 m.Add(new MenuItem(L.S("Garage", "Гараж"), () => main.Menu.Push(BuildGarageMenu(d)))
                     .WithValue(() => StoredCount(d.Id) + " / " + d.GarageSlots + "  >"));
-            m.Add(new MenuItem(L.S("Rent it out", "Сдавать в аренду"), () =>
+            if (rental)
             {
-                o.RentedOut = !o.RentedOut;
-                main.Saves.Save();
-                main.Menu.Replace(BuildOwnedMenu(d));
-            }).WithValue(() => L.OnOff(o.RentedOut))
-              .WithDescription(L.F("Earns {0} per bill. You cannot live here while it is rented.", "Приносит {0} за период. Пока сдано, жить здесь нельзя.", L.Money(d.Rent))));
+                // Rental investment: always let, no switch (see OwnershipRules.EarnsRent).
+                m.Add(new MenuItem(L.S("Rental income", "Доход от аренды"), null)
+                    .WithValue(() => "+" + L.Money(d.Rent))
+                    .WithDescription(L.F("Tenants live here, so it cannot be entered. Paid with every bill ({0} min of play). Maintenance: {1}.",
+                                         "Здесь живут арендаторы, поэтому войти нельзя. Выплачивается с каждым счётом (каждые {0} мин игры). Содержание: {1}.",
+                                         main.Config.Settings.BillingIntervalMinutes, L.Money(d.Maintenance))));
+                m.Add(new MenuItem(L.S("Net per bill", "Чистый доход за период"), null)
+                    .WithValue(() => L.Money(d.Rent - d.Maintenance)));
+                m.Add(new MenuItem(L.S("Next payment", "Следующая выплата"), null)
+                    .WithValue(() => L.F("in {0} min", "через {0} мин", MinutesToNextBill())));
+            }
+            else
+            {
+                m.Add(new MenuItem(L.S("Rent it out", "Сдавать в аренду"), () =>
+                {
+                    o.RentedOut = !o.RentedOut;
+                    main.Saves.Save();
+                    main.Menu.Replace(BuildOwnedMenu(d));
+                }).WithValue(() => L.OnOff(o.RentedOut))
+                  .WithDescription(L.F("Earns {0} per bill. You cannot live here while it is rented.", "Приносит {0} за период. Пока сдано, жить здесь нельзя.", L.Money(d.Rent))));
+            }
             m.Add(new MenuItem(L.F("Sell for {0}", "Продать за {0}", L.Money(Math.Round(d.Price * OwnershipRules.SellPropertyFactor))), () => main.Menu.Push(BuildSellConfirm(d)))
                 .WithDescription(L.S("85% of the price after agent fees. Stored vehicles must be taken out first.",
                                      "85% цены за вычетом комиссии. Сначала заберите машины из гаража.")));
@@ -438,6 +486,14 @@ namespace RealisticLifeSimulator.Game
             Menu m = new Menu(d.Name, touring ? L.S("Viewing", "Осмотр") : TypeName(d.Type));
             m.Add(new MenuItem(L.S("Leave", "Выйти"), () => { main.Menu.Close(); Leave(); })
                 .WithDescription(L.S("Back to the street at the front door.", "Выйти на улицу к входной двери.")));
+            if (!CanEnter(d))
+            {
+                // Only reachable from an old save made inside an apartment: leaving is all that is left.
+                m.Add(new MenuItem(L.S("This property is now a rental investment", "Теперь этот объект сдаётся в аренду"), null)
+                    .WithDescription(L.S("Apartments and houses can no longer be entered. Leave to return to the street.",
+                                         "В квартиры и дома больше нельзя входить. Выйдите, чтобы вернуться на улицу.")));
+                return m;
+            }
             if (!touring)
             {
                 if (d.Type != PropertyType.Garage)
@@ -502,7 +558,7 @@ namespace RealisticLifeSimulator.Game
 
         private void Enter(PropertyDef d, bool tour)
         {
-            if (!HasInterior(d)) return;
+            if (!CanEnter(d)) return; // 1.1.0: apartments and houses are never entered
             if (!tour)
             {
                 // Ownership is always checked here too, not only in the menu.
@@ -568,7 +624,12 @@ namespace RealisticLifeSimulator.Game
             main.Saves.Save();
             RefreshBlips();
             if (main.Menu.IsOpen) main.Menu.Close();
-            main.Notify(L.F("Congratulations! {0} is yours.", "Поздравляем! {0} теперь ваш.", d.Name));
+            if (OwnershipRules.IsRentalInvestment(d))
+                main.Notify(L.F("Congratulations! {0} is yours. Tenants move in: +{1} rent every {2} min of play.",
+                                "Поздравляем! {0} теперь ваш. Заезжают арендаторы: +{1} каждые {2} мин игры.",
+                                d.Name, L.Money(d.Rent), main.Config.Settings.BillingIntervalMinutes));
+            else
+                main.Notify(L.F("Congratulations! {0} is yours.", "Поздравляем! {0} теперь ваш.", d.Name));
             Log.Info("Bought property " + d.Id + " for " + d.Price);
         }
 

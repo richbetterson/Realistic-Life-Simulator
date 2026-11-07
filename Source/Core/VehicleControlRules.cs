@@ -55,6 +55,102 @@ namespace RealisticLifeSimulator.Core
         public static bool CutThrottle(float currentKmh, int limitKmh) { return currentKmh >= limitKmh - 1f; }
     }
 
+    // ------------------------------------------------------------ automatic speed limit (1.1.0)
+
+    // The limiter follows the detected road limit plus a fixed margin: 50 -> 60, 110 -> 120.
+    public static class AutoSpeedLimitRules
+    {
+        public const int MarginKmh = 10;
+        public const int ConfirmReadings = 2;    // a new road limit must be read twice in a row (~2 s)
+        public const int HoldUnknownMs = 15000;  // keep the last limit this long while the road is unknown
+
+        // 0 = no limit known (the caller falls back).
+        public static int Applied(int roadLimitKmh)
+        {
+            if (roadLimitKmh <= 0) return 0;
+            return SpeedLimiterRules.Clamp(roadLimitKmh + MarginKmh);
+        }
+
+        public const int RampKmhPerStep = 5;     // per limiter update (250 ms): about 20 km/h per second
+
+        // When the automatic limit drops below the current speed (freeway -> city), the cap is
+        // lowered in steps instead of at once, so the car slows down smoothly rather than
+        // being clamped to the new speed. Raising the limit applies at once.
+        public static int StepCap(int currentCap, int target, float speedKmh)
+        {
+            if (target <= 0) return target;
+            if (currentCap <= 0 || target >= currentCap) return target;
+            if (speedKmh <= target + 1f) return target;
+            int fromSpeed = Math.Min(currentCap, (int)Math.Floor(speedKmh));
+            return Math.Max(target, fromSpeed - RampKmhPerStep);
+        }
+
+        // Boats, aircraft and trains have no roads: the automatic limit does not apply to them.
+        public static bool Supports(int vehicleClass)
+        {
+            return SpeedLimiterRules.Supports(vehicleClass) && vehicleClass != 14;
+        }
+    }
+
+    // Turns noisy once-per-second road readings into a stable limit.
+    //   * The first reading applies at once.
+    //   * A different limit must be read ConfirmReadings times in a row before it replaces the
+    //     current one, so a junction or an overpass does not flip the limit back and forth.
+    //   * Unknown readings (0: off-road, no road node) keep the last limit for HoldUnknownMs,
+    //     then the limit becomes unknown and the caller uses its fallback.
+    public sealed class AutoSpeedLimitTracker
+    {
+        private int candidate, candidateCount, lastKnownAt;
+
+        public int RoadLimit { get; private set; }                 // confirmed road limit, 0 = unknown
+        public int AppliedLimit { get { return AutoSpeedLimitRules.Applied(RoadLimit); } }
+        public bool Known { get { return RoadLimit > 0; } }
+
+        public void Reset()
+        {
+            RoadLimit = 0;
+            candidate = 0;
+            candidateCount = 0;
+        }
+
+        // Returns true when the confirmed limit changed.
+        public bool Feed(int roadLimitKmh, int now)
+        {
+            if (roadLimitKmh <= 0)
+            {
+                candidate = 0;
+                candidateCount = 0;
+                if (RoadLimit > 0 && unchecked(now - lastKnownAt) > AutoSpeedLimitRules.HoldUnknownMs)
+                {
+                    RoadLimit = 0;
+                    return true;
+                }
+                return false;
+            }
+            lastKnownAt = now;
+            if (roadLimitKmh == RoadLimit)
+            {
+                candidate = 0;
+                candidateCount = 0;
+                return false;
+            }
+            if (RoadLimit <= 0)
+            {
+                RoadLimit = roadLimitKmh;
+                candidate = 0;
+                candidateCount = 0;
+                return true;
+            }
+            if (roadLimitKmh == candidate) candidateCount++;
+            else { candidate = roadLimitKmh; candidateCount = 1; }
+            if (candidateCount < AutoSpeedLimitRules.ConfirmReadings) return false;
+            RoadLimit = roadLimitKmh;
+            candidate = 0;
+            candidateCount = 0;
+            return true;
+        }
+    }
+
     // ------------------------------------------------------------ traffic lights
 
     public enum LightAxis { Same, Cross, Unknown }

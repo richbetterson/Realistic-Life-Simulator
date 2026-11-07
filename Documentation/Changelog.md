@@ -4,6 +4,28 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/). "Tests" lists the core unit-test count at each version. In-game status is described in the [README](../README.md#14-testing-status).
 
+## [1.1.0] - 2026-11-07 - Rental properties, no pedestrian accidents, automatic speed limit
+
+Not yet tested in GTA V: the changes below are covered by unit tests only.
+
+### Changed
+- **Apartments and houses are rental investments** (`OwnershipRules.IsRentalInvestment / EarnsRent / CanEnter`, `PropertySystem`). They can no longer be entered: no *Tour the interior*, no *Enter*, no teleport or interior loading. Once bought, their rent is paid with every bill whether or not the old *Rent it out* switch was on (no save migration needed). Their menu shows *Rental income*, *Net per bill* and *Next payment*; map icons and door prompts say "rental". Parking spaces at apartments and houses still work at the door marker.
+- **Garages are unchanged**: tour, enter (with the 0.6.0 interior fallbacks), store and take out cars, *Rent it out* toggle.
+- A player who loads an old save while standing inside an apartment interior is offered *Leave*, so nobody gets stuck.
+- *Properties* page: owned rentals show "rent +$X"; new row *Next rent / bills*.
+- Version 1.1.0; the one-time update notice no longer mentions pedestrian accidents or interiors.
+
+### Added
+- **Automatic road limit** for the speed limiter (`AutoSpeedLimitRules`, `AutoSpeedLimitTracker`, `SpeedLimiter`). Setting *Life Hub > Vehicle controls > Speed limiter > Automatic road limit* (`[SpeedLimiter] AutoRoadLimit`, off by default). The limiter follows the detected road limit **+ 10 km/h**, read once per second from the same classification as the LIMIT panel (`TrafficLawSystem.RoadLimitForAutoLimiter`, which also works with traffic laws off). A new limit must be read twice in a row; lower limits are approached in 5 km/h steps; an unknown road keeps the last limit for 15 s, then the manual value is the fallback. No notification per road change. Boats are excluded. With the setting off the manual limiter is unchanged. The *Speed limiter on / off* key switches the automatic mode off as well.
+- Driving panel: second line **AUTO 60** / **LIMITER 60** while the limiter is active. Speed limiter menu: *Applied limit* row; *Limiter* renamed *Manual limiter*.
+- 9 new unit tests (`V110Tests.cs`).
+
+### Removed
+- **Pedestrian accidents.** The pedestrian detection (`TryDetectPedestrian`, `IsStruckPedestrian`, the 7 m scan every 300 ms) and the pedestrian fallback in the impact check are gone, so hitting a pedestrian never opens a scene, calls 911, writes a report, issues fines/points or affects the licence. Removed the *Pedestrian accidents* setting (an old `PedestrianAccidents=` entry is ignored and dropped on the next save), the *Striking a pedestrian* entry in *Fine amounts*, the pedestrian notification and the pedestrian wording in the licence help. Vehicle accidents, ambulances, police and reports are unchanged; old pedestrian reports still display.
+
+### Tests
+- 66 / 66. Updated: the billing test now uses a garage for the "not rented out" case; the 0.6.0 settings round trip no longer sets the removed pedestrian setting.
+
 ## [1.0.0] - 2026-11-07 - First stable release
 
 The first public stable version. It contains everything from 0.6.0 below, which was never published on its own.
